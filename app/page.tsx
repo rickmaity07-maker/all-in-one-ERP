@@ -70,13 +70,13 @@ export default function LoginScreen() {
 
   return (
     <main className="flex-1 bg-[#F4F7FE] flex items-center justify-center relative overflow-hidden h-full w-full">
-      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-gradient-to-br from-cyan-400 to-blue-600 rounded-full blur-[120px] opacity-40 mix-blend-multiply"></div>
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-gradient-to-br from-[#8A2387] to-[#E94057] rounded-full blur-[120px] opacity-40 mix-blend-multiply"></div>
+      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-linear-to-br from-cyan-400 to-blue-600 rounded-full blur-[120px] opacity-40 mix-blend-multiply"></div>
+      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-linear-to-br from-[#8A2387] to-[#E94057] rounded-full blur-[120px] opacity-40 mix-blend-multiply"></div>
 
-      <div className="w-[850px] bg-white/60 backdrop-blur-2xl rounded-3xl shadow-[0_24px_48px_rgba(0,0,0,0.05)] border border-white flex overflow-hidden z-10">
+      <div className="w-212.5 bg-white/60 backdrop-blur-2xl rounded-3xl shadow-[0_24px_48px_rgba(0,0,0,0.05)] border border-white flex overflow-hidden z-10">
         
         {/* Left Side: Branding */}
-        <div className="w-1/2 bg-gradient-to-br from-[#2A0845] to-[#6441A5] p-12 text-white flex flex-col justify-between relative overflow-hidden">
+        <div className="w-1/2 bg-linear-to-br from-[#2A0845] to-[#6441A5] p-12 text-white flex flex-col justify-between relative overflow-hidden">
           <div className="relative z-10">
             <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center mb-8 backdrop-blur-md shadow-inner border border-white/10">
               <Zap size={24} className="text-cyan-300" />

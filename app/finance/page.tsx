@@ -80,7 +80,7 @@ export default function FinancePortal() {
       {/* GENERATE INVOICE MODAL */}
       {isModalOpen && (
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100">
+          <div className="bg-white rounded-3xl p-8 w-10 dow-2xl border border-slate-100">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-bold text-slate-800">Generate Invoice</h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700"><X size={20}/></button>
@@ -147,7 +147,7 @@ export default function FinancePortal() {
               <li>
                 <button 
                   onClick={() => setActiveTab("overview")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "overview" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "overview" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   Overview & Cash Flow
                 </button>
@@ -155,7 +155,7 @@ export default function FinancePortal() {
               <li>
                 <button 
                   onClick={() => setActiveTab("invoices")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "invoices" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "invoices" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   Student Tuition Invoices
                 </button>
@@ -178,7 +178,7 @@ export default function FinancePortal() {
           </div>
           <button 
             onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-md hover:scale-105 transition-all"
+            className="flex items-center gap-2 bg-linear-to-r from-blue-600 to-indigo-600 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-md hover:scale-105 transition-all"
           >
             <Plus size={18} /> Generate Invoice
           </button>
@@ -204,7 +204,7 @@ export default function FinancePortal() {
             <>
               {/* MASSIVE VIBRANT WIDGETS */}
               <div className="grid grid-cols-3 gap-8 mb-10">
-                <div className="bg-gradient-to-br from-cyan-400 to-blue-600 rounded-4xl p-8 text-white shadow-lg relative overflow-hidden group">
+                <div className="bg-linear-to-br from-cyan-400 to-blue-600 rounded-4xl p-8 text-white shadow-lg relative overflow-hidden group">
                   <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
                   <p className="text-cyan-100 font-semibold tracking-wide text-sm mb-2 uppercase">Total Revenue (YTD)</p>
                   <h3 className="text-4xl font-black mb-6">$124,500<span className="text-xl font-bold text-cyan-200">.00</span></h3>
@@ -213,7 +213,7 @@ export default function FinancePortal() {
                   </div>
                 </div>
 
-                <div className="bg-gradient-to-br from-pink-500 to-orange-400 rounded-4xl p-8 text-white shadow-lg relative overflow-hidden group cursor-pointer" onClick={() => setActiveTab("invoices")}>
+                <div className="bg-linear-to-br from-pink-500 to-orange-400 rounded-4xl p-8 text-white shadow-lg relative overflow-hidden group cursor-pointer" onClick={() => setActiveTab("invoices")}>
                   <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
                   <p className="text-pink-100 font-semibold tracking-wide text-sm mb-2 uppercase">Outstanding Tuition</p>
                   <h3 className="text-4xl font-black mb-6">${outstandingTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
@@ -222,7 +222,7 @@ export default function FinancePortal() {
                   </div>
                 </div>
 
-                <div className="bg-gradient-to-br from-[#8A2387] to-[#E94057] rounded-4xl p-8 text-white shadow-lg relative overflow-hidden group">
+                <div className="bg-linear-to-br from-[#8A2387] to-[#E94057] rounded-4xl p-8 text-white shadow-lg relative overflow-hidden group">
                   <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
                   <p className="text-white/80 font-semibold tracking-wide text-sm mb-2 uppercase">Next Payroll Run</p>
                   <h3 className="text-4xl font-black mb-6">$42,900<span className="text-xl font-bold text-white/80">.00</span></h3>

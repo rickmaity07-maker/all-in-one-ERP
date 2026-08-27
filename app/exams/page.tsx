@@ -79,7 +79,7 @@ export default function ExamsPortal() {
       {/* CREATE EXAM MODAL */}
       {isModalOpen && (
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100">
+          <div className="bg-white rounded-3xl p-8 w-100 shadow-2xl border border-slate-100">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-bold text-slate-800">Schedule Exam</h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700"><X size={20}/></button>
@@ -145,7 +145,7 @@ export default function ExamsPortal() {
               <li>
                 <button 
                   onClick={() => setActiveTab("schedule")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "schedule" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "schedule" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   {userRole === "student" ? "My Exam Schedule" : "Global Exam Schedule"}
                 </button>
@@ -154,7 +154,7 @@ export default function ExamsPortal() {
                 <li>
                   <button 
                     onClick={() => setActiveTab("plagiarism")}
-                    className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "plagiarism" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                    className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "plagiarism" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                   >
                     Plagiarism & Integrity Alerts
                   </button>
@@ -235,7 +235,7 @@ export default function ExamsPortal() {
                 </div>
 
                 {canManageExams && (
-                  <div className="col-span-1 bg-gradient-to-br from-[#8A2387] to-[#E94057] rounded-4xl p-8 text-white shadow-lg relative overflow-hidden h-fit">
+                  <div className="col-span-1 bg-linear-to-br from-[#8A2387] to-[#E94057] rounded-4xl p-8 text-white shadow-lg relative overflow-hidden h-fit">
                     <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
                     <h3 className="text-lg font-bold text-white/90 mb-6 flex items-center gap-2"><ShieldAlert size={20}/> Quick Alerts</h3>
                     <div className="bg-black/20 backdrop-blur-md rounded-2xl p-4 border border-white/10 mb-4 cursor-pointer hover:bg-black/30 transition-colors" onClick={() => setActiveTab("plagiarism")}>

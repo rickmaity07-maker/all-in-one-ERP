@@ -88,7 +88,7 @@ export default function CalendarPortal() {
       {/* NEW EVENT MODAL */}
       {isModalOpen && (
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100">
+          <div className="bg-white rounded-3xl p-8 w-100 shadow-2xl border border-slate-100">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-bold text-slate-800">Book Schedule Slot</h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700"><X size={20}/></button>
@@ -182,7 +182,7 @@ export default function CalendarPortal() {
           </div>
           <button 
             onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-3 rounded-2xl text-sm font-bold hover:scale-105 transition-all"
+            className="flex items-center gap-2 bg-linear-to-r from-blue-600 to-indigo-600 text-white px-6 py-3 rounded-2xl text-sm font-bold hover:scale-105 transition-all"
           >
             <Plus size={18} /> Book Slot
           </button>
@@ -208,7 +208,7 @@ export default function CalendarPortal() {
                 const dayEvents = events.filter(e => e.event_date === cellDateStr && filters[e.event_type as keyof typeof filters]);
 
                 return (
-                  <div key={i} className={`min-h-[90px] p-2.5 rounded-2xl border transition-all flex flex-col ${isCurrentMonth ? "border-slate-100 bg-slate-50/30" : "border-transparent opacity-30"}`}>
+                  <div key={i} className={`min-h-22.5-2.5 rounded-2xl border transition-all flex flex-col ${isCurrentMonth ? "border-slate-100 bg-slate-50/30" : "border-transparent opacity-30"}`}>
                     <span className="text-xs font-bold text-slate-700 mb-2">{isCurrentMonth ? dayNum : ""}</span>
                     <div className="space-y-1">
                       {dayEvents.map((evt, idx) => (

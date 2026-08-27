@@ -98,7 +98,7 @@ export default function ELearningPortal() {
       {/* UPLOAD MODAL */}
       {isModalOpen && (
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-3xl p-8 w-[450px] shadow-2xl border border-slate-100">
+          <div className="bg-white rounded-3xl p-8 w-112.5 shadow-2xl border border-slate-100">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                 <CloudUpload size={20} className="text-indigo-600"/> Upload File
@@ -203,7 +203,7 @@ export default function ELearningPortal() {
       {/* MAIN CONTENT AREA */}
       <main className="flex-1 bg-[#F4F7FE] flex flex-col min-w-0 overflow-y-auto">
         <header className="h-24 flex items-center justify-between px-10 shrink-0">
-          <div className="relative w-[450px] shadow-[0_4px_20px_rgba(0,0,0,0.03)] rounded-2xl">
+          <div className="relative w-112.5 shadow-[0_4px_20px_rgba(0,0,0,0.03)] rounded-2xl">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
             <input type="text" placeholder="Search lectures or documents..." className="w-full pl-12 pr-4 py-3.5 bg-white border-none rounded-2xl text-sm outline-none font-medium" />
           </div>
@@ -235,7 +235,7 @@ export default function ELearningPortal() {
             // VIEW 1: LECTURES
             // ==========================================
             <div className="grid grid-cols-3 gap-6">
-              <div className="col-span-2 bg-gradient-to-br from-indigo-900 to-[#2A0845] rounded-4xl p-10 flex flex-col justify-between aspect-video relative overflow-hidden group shadow-xl">
+              <div className="col-span-2 bg-linear-to-br from-indigo-900 to-[#2A0845] rounded-4xl p-10 flex flex-col justify-between aspect-video relative overflow-hidden group shadow-xl">
                 <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
                   <button className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-md hover:scale-110 transition-all border border-white/30 shadow-2xl">

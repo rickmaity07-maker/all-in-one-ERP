@@ -83,7 +83,7 @@ export default function HousingPortal() {
       {/* NEW TICKET MODAL */}
       {isModalOpen && (
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-3xl p-8 w-[420px] shadow-2xl border border-slate-100">
+          <div className="bg-white rounded-3xl p-8 w-105 shadow-2xl border border-slate-100">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Wrench size={20} className="text-blue-600"/> Submit Maintenance Ticket</h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700"><X size={20}/></button>
@@ -150,7 +150,7 @@ export default function HousingPortal() {
               <li>
                 <button 
                   onClick={() => setActiveTab("overview")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "overview" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "overview" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   {userRole === "student" ? "My Accommodations" : "Campus Overview"}
                 </button>
@@ -158,7 +158,7 @@ export default function HousingPortal() {
               <li>
                 <button 
                   onClick={() => setActiveTab("tickets")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "tickets" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "tickets" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   Maintenance Tickets ({tickets.length})
                 </button>
@@ -166,7 +166,7 @@ export default function HousingPortal() {
               <li>
                 <button 
                   onClick={() => setActiveTab("meals")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "meals" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "meals" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   {userRole === "student" ? "Meal Plan Balance" : "Facility Booking"}
                 </button>
@@ -185,7 +185,7 @@ export default function HousingPortal() {
           </div>
           <button 
             onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-md hover:scale-105 transition-all"
+            className="flex items-center gap-2 bg-linear-to-r from-blue-600 to-indigo-600 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-md hover:scale-105 transition-all"
           >
             <Plus size={18} /> {userRole === "student" ? "New Ticket" : "Book Facility"}
           </button>
@@ -271,7 +271,7 @@ export default function HousingPortal() {
             // VIEW: MEALS & BILLING
             // ==========================================
             <div className="grid grid-cols-2 gap-6">
-              <div className="bg-gradient-to-br from-orange-400 to-pink-500 rounded-4xl p-8 text-white shadow-lg relative overflow-hidden flex flex-col justify-between aspect-[16/9]">
+              <div className="bg-linear-to-br from-orange-400 to-pink-500 rounded-4xl p-8 text-white shadow-lg relative overflow-hidden flex flex-col justify-between aspect-video">
                 <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
                 <div>
                   <h3 className="text-lg font-bold text-white/90 mb-1 flex items-center gap-2"><Utensils size={20}/> Meal Plan Balance</h3>
@@ -311,7 +311,7 @@ export default function HousingPortal() {
                 </div>
               </div>
 
-              <div className="col-span-1 bg-gradient-to-br from-cyan-400 to-blue-600 rounded-4xl p-8 text-white shadow-lg relative overflow-hidden flex flex-col justify-between">
+              <div className="col-span-1 bg-linear-to-br from-cyan-400 to-blue-600 rounded-4xl p-8 text-white shadow-lg relative overflow-hidden flex flex-col justify-between">
                 <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
                 <div>
                   <p className="text-cyan-100 font-semibold tracking-wide text-sm mb-2 uppercase">Dormitory Occupancy</p>

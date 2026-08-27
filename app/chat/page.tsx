@@ -98,7 +98,7 @@ export default function ChatPortal() {
               <li>
                 <button 
                   onClick={() => switchChannel("general")}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 text-sm rounded-xl transition-all ${activeChannel === "general" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm font-bold" : "text-slate-500 hover:bg-slate-50 font-semibold"}`}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 text-sm rounded-xl transition-all ${activeChannel === "general" ? "bg-lanraro-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm font-bold" : "text-slate-500 hover:bg-slate-50 font-semibold"}`}
                 >
                   <span className="flex items-center gap-2"><Hash size={16} className={activeChannel === "general" ? "text-blue-500" : "text-slate-400"} /> general</span>
                 </button>
@@ -106,7 +106,7 @@ export default function ChatPortal() {
               <li>
                 <button 
                   onClick={() => switchChannel("faculty-lounge")}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 text-sm rounded-xl transition-all ${activeChannel === "faculty-lounge" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm font-bold" : "text-slate-500 hover:bg-slate-50 font-semibold"}`}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 text-sm rounded-xl transition-all ${activeChannel === "faculty-lounge" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm font-bold" : "text-slate-500 hover:bg-slate-50 font-semibold"}`}
                 >
                   <span className="flex items-center gap-2"><Hash size={16} className={activeChannel === "faculty-lounge" ? "text-blue-500" : "text-slate-400"} /> faculty-lounge</span>
                 </button>
@@ -114,7 +114,7 @@ export default function ChatPortal() {
               <li>
                 <button 
                   onClick={() => switchChannel("mech-engineering-101")}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 text-sm rounded-xl transition-all ${activeChannel === "mech-engineering-101" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm font-bold" : "text-slate-500 hover:bg-slate-50 font-semibold"}`}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 text-sm rounded-xl transition-all ${activeChannel === "mech-engineering-101" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm font-bold" : "text-slate-500 hover:bg-slate-50 font-semibold"}`}
                 >
                   <span className="flex items-center gap-2"><Hash size={16} className={activeChannel === "mech-engineering-101" ? "text-blue-500" : "text-slate-400"} /> mech-engineering-101</span>
                 </button>
@@ -129,10 +129,10 @@ export default function ChatPortal() {
               <li>
                 <button 
                   onClick={() => switchChannel("Sarah Jenkins", true)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all ${activeChannel === "Sarah Jenkins" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm font-bold" : "text-slate-600 hover:bg-slate-50 font-semibold"}`}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all ${activeChannel === "Sarah Jenkins" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm font-bold" : "text-slate-600 hover:bg-slate-50 font-semibold"}`}
                 >
                   <div className="relative">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-pink-400 to-orange-400 flex items-center justify-center text-white font-bold text-xs shadow-sm">SJ</div>
+                    <div className="w-8 h-8 rounded-full bg-linear-to-br from-pink-400 to-orange-400 flex items-center justify-center text-white font-bold text-xs shadow-sm">SJ</div>
                     <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white"></div>
                   </div>
                   Sarah Jenkins
@@ -141,10 +141,10 @@ export default function ChatPortal() {
               <li>
                 <button 
                   onClick={() => switchChannel("Marcus Chen", true)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all ${activeChannel === "Marcus Chen" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm font-bold" : "text-slate-600 hover:bg-slate-50 font-semibold"}`}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all ${activeChannel === "Marcus Chen" ? "bg-lanraro-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm font-bold" : "text-slate-600 hover:bg-slate-50 font-semibold"}`}
                 >
                   <div className="relative">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center text-white font-bold text-xs shadow-sm">MC</div>
+                    <div className="w-8 h-8 rounded-full bg-linear-to-br from-cyan-400 to-blue-500 flex items-center justify-center text-white font-bold text-xs shadow-sm">MC</div>
                     <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white"></div>
                   </div>
                   Marcus Chen
@@ -213,7 +213,7 @@ export default function ChatPortal() {
                         {new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                       </span>
                     </div>
-                    <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-4 rounded-2xl rounded-tr-none shadow-md text-white text-sm leading-relaxed">
+                    <div className="bg-lanraro-r from-blue-600 to-indigo-600 p-4 rounded-2xl rounded-tr-none shadow-md text-white text-sm leading-relaxed">
                       {msg.message}
                     </div>
                   </div>
@@ -221,7 +221,7 @@ export default function ChatPortal() {
               ) : (
                 // OTHER PERSON MESSAGE
                 <div key={msg.id} className="flex gap-4 max-w-3xl">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-pink-400 to-orange-400 shrink-0 flex items-center justify-center text-white font-bold text-sm shadow-md mt-1">
+                  <div className="w-10 h-10 rounded-full bg-lanraro-br from-pink-400 to-orange-400 shrink-0 flex items-center justify-center text-white font-bold text-sm shadow-md mt-1">
                     {getInitials(msg.sender_name)}
                   </div>
                   <div>

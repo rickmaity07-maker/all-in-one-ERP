@@ -55,7 +55,7 @@ export default function GlobalSidebar() {
   };
 
   return (
-    <nav className={`bg-gradient-to-b from-[#2A0845] to-[#6441A5] flex flex-col items-center py-6 justify-between shrink-0 shadow-[4px_0_24px_rgba(100,65,165,0.15)] z-20 transition-all duration-300 ease-in-out overflow-y-auto hide-scrollbar ${isExpanded ? "w-64" : "w-20"}`}>
+    <nav className={`bg-linear-to-b from-[#2A0845] to-[#6441A5] flex flex-col items-center py-6 justify-between shrink-0 shadow-[4px_0_24px_rgba(100,65,165,0.15)] z-20 transition-all duration-300 ease-in-out overflow-y-auto hide-scrollbar ${isExpanded ? "w-64" : "w-20"}`}>
       
       <div className={`flex flex-col gap-2 w-full ${isExpanded ? "px-6" : "px-4"}`}>
         

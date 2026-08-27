@@ -79,7 +79,7 @@ export default function AdminPortal() {
       {/* INVITE USER MODAL */}
       {isModalOpen && (
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100">
+          <div className="bg-white rounded-3xl p-8 w-100 shadow-2xl border border-slate-100">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-bold text-slate-800">Provision New User</h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700"><X size={20}/></button>
@@ -142,7 +142,7 @@ export default function AdminPortal() {
               <li>
                 <button 
                   onClick={() => setActiveTab("users")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "users" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-indigo-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "users" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-indigo-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   User Directory
                 </button>
@@ -150,7 +150,7 @@ export default function AdminPortal() {
               <li>
                 <button 
                   onClick={() => setActiveTab("security")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "security" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-indigo-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "security" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-indigo-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   Security Logs
                 </button>
@@ -266,7 +266,7 @@ export default function AdminPortal() {
                                 {profile.role}
                               </span>
                             </td>
-                            <td className="px-6 py-4 font-mono text-xs text-slate-400 truncate max-w-[150px]">
+                            <td className="px-6 py-4 font-mono text-xs text-slate-400 truncate max-w-37.5">
                               {profile.id}
                             </td>
                             <td className="px-6 py-4 text-right">

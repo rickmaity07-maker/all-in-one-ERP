@@ -125,7 +125,7 @@ export default function AdmissionsPortal() {
       {/* ADD APPLICANT MODAL */}
       {isModalOpen && (
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100">
+          <div className="bg-white rounded-3xl p-8 w-100 shadow-2xl border border-slate-100">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-bold text-slate-800">New Applicant</h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700"><X size={20}/></button>
@@ -181,7 +181,7 @@ export default function AdmissionsPortal() {
               <li>
                 <button 
                   onClick={() => setActiveTab("pipeline")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "pipeline" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "pipeline" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   Active Applicants
                 </button>
@@ -189,7 +189,7 @@ export default function AdmissionsPortal() {
               <li>
                 <button 
                   onClick={() => setActiveTab("verification")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "verification" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "verification" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   Document Verification
                 </button>
@@ -316,7 +316,7 @@ export default function AdmissionsPortal() {
                               </button>
                               <button 
                                 onClick={() => handleStatusChange(app.id, "Approved")}
-                                className="px-4 py-2 bg-emerald-500 text-white font-bold rounded-xl shadow-[0_4px_12px_rgba(16,185,129,0.3)] hover:bg-emerald-600 transition-all text-xs flex items-center gap-1 inline-flex"
+                                className="px-4 py-2 bg-emerald-500 text-white font-bold rounded-xl shadow-[0_4px_12px_rgba(16,185,129,0.3)] hover:bg-emerald-600 transition-all text-xs flex items-center gap-1"
                               >
                                 <Check size={14} /> Approve Docs
                               </button>

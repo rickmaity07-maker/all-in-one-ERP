@@ -96,7 +96,7 @@ export default function TasksPortal() {
       {/* CREATE TASK MODAL */}
       {isModalOpen && (
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100">
+          <div className="bg-white rounded-3xl p-8 w-100 shadow-2xl border border-slate-100">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-bold text-slate-800">New Task</h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700"><X size={20}/></button>
@@ -168,7 +168,7 @@ export default function TasksPortal() {
               <li>
                 <button 
                   onClick={() => setActiveCategory("mechatronics")}
-                  className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeCategory === "mechatronics" ? "bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeCategory === "mechatronics" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   <span className="w-2 h-2 rounded-full bg-blue-500"></span> Mechatronics
                 </button>
@@ -176,7 +176,7 @@ export default function TasksPortal() {
               <li>
                 <button 
                   onClick={() => setActiveCategory("horology")}
-                  className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeCategory === "horology" ? "bg-gradient-to-r from-orange-50 to-pink-50 text-orange-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeCategory === "horology" ? "bg-linear-to-r from-orange-50 to-pink-50 text-orange-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   <span className="w-2 h-2 rounded-full bg-orange-500"></span> Horological Design
                 </button>
@@ -184,7 +184,7 @@ export default function TasksPortal() {
               <li>
                 <button 
                   onClick={() => setActiveCategory("software")}
-                  className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeCategory === "software" ? "bg-gradient-to-r from-pink-50 to-purple-50 text-pink-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeCategory === "software" ? "bg-linear-to-r from-pink-50 to-purple-50 text-pink-600 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   <span className="w-2 h-2 rounded-full bg-pink-500"></span> Software Dev
                 </button>
@@ -202,7 +202,7 @@ export default function TasksPortal() {
           </div>
           <button 
             onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-[0_8px_16px_rgba(79,70,229,0.3)] hover:scale-105 transition-all"
+            className="flex items-center gap-2 bg-lanraro-r from-blue-600 to-indigo-600 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-[0_8px_16px_rgba(79,70,229,0.3)] hover:scale-105 transition-all"
           >
             <Plus size={18} /> Create Task
           </button>

@@ -86,7 +86,7 @@ export default function RegistrarPortal() {
       {/* ADD STUDENT MODAL */}
       {isModalOpen && (
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-3xl p-8 w-[400px] shadow-2xl border border-slate-100">
+          <div className="bg-white rounded-3xl p-8 w-100 shadow-2xl border border-slate-100">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-bold text-slate-800">Add Student Record</h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700"><X size={20}/></button>
@@ -154,7 +154,7 @@ export default function RegistrarPortal() {
               <li>
                 <button 
                   onClick={() => setActiveTab("main")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "main" ? "bg-gradient-to-r from-purple-50 to-indigo-50 text-indigo-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "main" ? "bg-linear-to-r from-purple-50 to-indigo-50 text-indigo-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   {userRole === "student" ? "My Degree Audit" : "Global Student Directory"}
                 </button>
@@ -162,7 +162,7 @@ export default function RegistrarPortal() {
               <li>
                 <button 
                   onClick={() => setActiveTab("secondary")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "secondary" ? "bg-gradient-to-r from-purple-50 to-indigo-50 text-indigo-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "secondary" ? "bg-linear-to-r from-purple-50 to-indigo-50 text-indigo-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
                 >
                   {userRole === "student" ? "Request Official Transcript" : "Academic Probation"}
                 </button>
@@ -185,7 +185,7 @@ export default function RegistrarPortal() {
           {["owner", "administration", "teacher"].includes(userRole) && (
             <button 
               onClick={() => setIsModalOpen(true)}
-              className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-md hover:scale-105 transition-all"
+              className="flex items-center gap-2 bg-linear-to-r from-blue-600 to-indigo-600 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-md hover:scale-105 transition-all"
             >
               <Plus size={18} /> Add Student
             </button>
@@ -204,7 +204,7 @@ export default function RegistrarPortal() {
             // ==========================================
             activeTab === "main" ? (
               <div className="space-y-8">
-                <div className="bg-gradient-to-br from-[#2A0845] to-[#6441A5] rounded-4xl p-8 text-white shadow-lg relative overflow-hidden flex justify-between items-center">
+                <div className="bg-linear-to-br from-[#2A0845] to-[#6441A5] rounded-4xl p-8 text-white shadow-lg relative overflow-hidden flex justify-between items-center">
                   <div className="absolute right-0 top-0 w-64 h-64 bg-cyan-500/20 rounded-full blur-3xl"></div>
                   <div className="relative z-10">
                     <h1 className="text-3xl font-black mb-2">Rick Maity</h1>
@@ -221,7 +221,7 @@ export default function RegistrarPortal() {
                 <div className="bg-white rounded-4xl p-8 shadow-sm border border-slate-100">
                   <h3 className="text-xl font-bold text-slate-800 mb-6">Degree Progress (120/180 Credits)</h3>
                   <div className="w-full bg-slate-100 rounded-full h-4 mb-8 overflow-hidden">
-                    <div className="bg-gradient-to-r from-cyan-400 to-blue-500 h-4 rounded-full w-[66%]"></div>
+                    <div className="bg-linear-to-r from-cyan-400 to-blue-500 h-4 rounded-full w-[66%]"></div>
                   </div>
                   
                   <div className="space-y-4">
