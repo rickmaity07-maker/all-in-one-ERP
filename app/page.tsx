@@ -56,9 +56,9 @@ export default function LoginScreen() {
         
         // 4. Secure dynamic routing
         if (userRole === "owner" || userRole === "administration") {
-          router.push("/admin");
+          router.push("/admissions"); // Route admins to the CRM
         } else {
-          router.push("/teacher");
+          router.push("/e-learning"); // Route teachers & students to their classes
         }
       }
     } catch (error: any) {

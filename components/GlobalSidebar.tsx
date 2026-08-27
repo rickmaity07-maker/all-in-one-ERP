@@ -5,7 +5,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { 
   Book, CheckSquare, Shield, User, MessageSquare, 
   Calendar, Wallet, LogOut, GraduationCap, Building, 
-  ClipboardCheck, Users as UsersIcon, Menu, ChevronLeft
+  ClipboardCheck, Users as UsersIcon, Menu, ChevronLeft,
+  Cpu, Briefcase, Library, Ticket, Car
 } from "lucide-react";
 import { useState, useEffect } from "react";
 
@@ -54,7 +55,7 @@ export default function GlobalSidebar() {
   };
 
   return (
-    <nav className={`bg-linear-to-b from-[#2A0845] to-[#6441A5] flex flex-col items-center py-6 justify-between shrink-0 shadow-[4px_0_24px_rgba(100,65,165,0.15)] z-20 transition-all duration-300 ease-in-out overflow-y-auto hide-scrollbar ${isExpanded ? "w-64" : "w-20"}`}>
+    <nav className={`bg-gradient-to-b from-[#2A0845] to-[#6441A5] flex flex-col items-center py-6 justify-between shrink-0 shadow-[4px_0_24px_rgba(100,65,165,0.15)] z-20 transition-all duration-300 ease-in-out overflow-y-auto hide-scrollbar ${isExpanded ? "w-64" : "w-20"}`}>
       
       <div className={`flex flex-col gap-2 w-full ${isExpanded ? "px-6" : "px-4"}`}>
         
@@ -84,13 +85,20 @@ export default function GlobalSidebar() {
           )}
         </div>
         
-        {/* Navigation Links using the Helper */}
-        {renderLink("/teacher", Book, "E-Learning")}
+        {/* Navigation Links */}
+        {renderLink("/e-learning", Book, "E-Learning")}
         {renderLink("/exams", ClipboardCheck, "Examinations")}
         {renderLink("/registrar", GraduationCap, "Registrar (SIS)")}
         {renderLink("/housing", Building, "Housing & Facilities")}
         {renderLink("/chat", MessageSquare, "Communications")}
         {renderLink("/calendar", Calendar, "Master Calendar")}
+
+        {/* NEW PHASE 2 CAMPUS MODULES */}
+        {renderLink("/makerspace", Cpu, "MakerSpace & Labs")}
+        {renderLink("/careers", Briefcase, "Career & Portfolio")}
+        {renderLink("/library", Library, "Digital Library")}
+        {renderLink("/campus-life", Ticket, "Student Life")}
+        {renderLink("/logistics", Car, "Logistics & Transport")}
         
         {/* Role-Restricted Links */}
         {renderLink("/tasks", CheckSquare, "Task Management", ["owner", "administration", "teacher"])}
