@@ -1,68 +1,71 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Mail, Lock, ArrowRight, Zap, Loader2, AlertCircle } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { Mail, Lock, ArrowRight, Zap, Loader2, AlertCircle, User, CheckCircle2 } from "lucide-react";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { useSession } from "@/lib/session";
+
+const fieldClass =
+  "w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium";
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { user, loading } = useSession();
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  
+
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
 
-  const handleLiveLogin = async (e: React.FormEvent) => {
+  useEffect(() => {
+    try {
+      const notice = sessionStorage.getItem("erp_login_notice");
+      if (notice) {
+        // One-off message handed over from the auth guard via sessionStorage.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setErrorMsg(notice);
+        sessionStorage.removeItem("erp_login_notice");
+      }
+    } catch {}
+  }, []);
+
+  // Already signed in (e.g. app restarted) → straight to the dashboard.
+  useEffect(() => {
+    if (!loading && user) router.replace("/dashboard");
+  }, [loading, user, router]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setErrorMsg("");
+    setInfoMsg("");
 
     try {
-      // 1. Authenticate with Supabase
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      if (!isSupabaseConfigured) throw new Error("The app is missing its database settings. See README → Setup.");
 
-      if (authError) throw authError;
-
-      if (authData.user) {
-        const userId = authData.user.id;
-
-        // 2. Query the profiles table without .single() to prevent JSON coercion crashes
-        const { data: profileList, error: profileError } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", userId);
-
-        let userRole = "owner"; // Default fallback to owner so you never get locked out
-
-        if (profileError) {
-          console.warn("Could not query profiles, proceeding with fallback:", profileError.message);
-        } else if (profileList && profileList.length > 0) {
-          userRole = profileList[0].role;
-        } else {
-          // Self-heal: automatically create the missing profile row in the database
-          await supabase.from("profiles").upsert({
-            id: userId,
-            full_name: email.split("@")[0],
-            role: "owner",
-          });
+      if (mode === "signup") {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { full_name: fullName.trim() } },
+        });
+        if (error) throw error;
+        if (!data.session) {
+          setInfoMsg("Account created. Check your email to confirm it, then sign in.");
+          setMode("signin");
+          return;
         }
-
-        // 3. Save role to localStorage for dashboard routing
-        localStorage.setItem("erp_mock_role", userRole);
-        
-        // 4. Secure dynamic routing
-        if (userRole === "owner" || userRole === "administration") {
-          router.push("/admissions"); // Route admins to the CRM
-        } else {
-          router.push("/e-learning"); // Route teachers & students to their classes
-        }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
       }
-    } catch (error: any) {
-      setErrorMsg(error.message || "Failed to authenticate. Please check your credentials.");
+      router.push("/dashboard");
+    } catch (error: unknown) {
+      setErrorMsg(error instanceof Error ? error.message : "Failed to authenticate. Please check your credentials.");
     } finally {
       setIsLoading(false);
     }
@@ -73,72 +76,84 @@ export default function LoginScreen() {
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-linear-to-br from-cyan-400 to-blue-600 rounded-full blur-[120px] opacity-40 mix-blend-multiply"></div>
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-linear-to-br from-[#8A2387] to-[#E94057] rounded-full blur-[120px] opacity-40 mix-blend-multiply"></div>
 
-      <div className="w-212.5 bg-white/60 backdrop-blur-2xl rounded-3xl shadow-[0_24px_48px_rgba(0,0,0,0.05)] border border-white flex overflow-hidden z-10">
-        
+      <div className="w-212.5 max-w-[95%] bg-white/60 backdrop-blur-2xl rounded-3xl shadow-[0_24px_48px_rgba(0,0,0,0.05)] border border-white flex overflow-hidden z-10">
+
         {/* Left Side: Branding */}
         <div className="w-1/2 bg-linear-to-br from-[#2A0845] to-[#6441A5] p-12 text-white flex flex-col justify-between relative overflow-hidden">
           <div className="relative z-10">
             <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center mb-8 backdrop-blur-md shadow-inner border border-white/10">
               <Zap size={24} className="text-cyan-300" />
             </div>
-            <h1 className="text-4xl font-black mb-4 leading-tight">Kern OS<br/>Architecture.</h1>
+            <h1 className="text-4xl font-black mb-4 leading-tight">Kern OS<br />Architecture.</h1>
             <p className="text-white/70 font-medium leading-relaxed">
               Welcome back to the enterprise portal. Access your curriculum, track tasks, and manage operations from a single secure endpoint.
             </p>
           </div>
 
           <div className="relative z-10 text-xs font-bold tracking-wider text-white/50 uppercase">
-            Database Connection: <span className="text-emerald-400 ml-1">Live</span>
+            Database Connection:{" "}
+            {isSupabaseConfigured ? <span className="text-emerald-400 ml-1">Configured</span> : <span className="text-pink-400 ml-1">Not configured</span>}
           </div>
         </div>
 
-        {/* Right Side: Live Login Form */}
+        {/* Right Side: Login / Sign-up Form */}
         <div className="w-1/2 p-12 bg-white flex flex-col justify-center">
-          <h2 className="text-2xl font-bold text-slate-800 mb-2">Secure Sign In</h2>
-          <p className="text-sm font-medium text-slate-500 mb-8">Enter your credentials to access the cloud portal.</p>
-          
-          <form onSubmit={handleLiveLogin} className="space-y-4">
+          <h2 className="text-2xl font-bold text-slate-800 mb-2">{mode === "signin" ? "Secure Sign In" : "Create Account"}</h2>
+          <p className="text-sm font-medium text-slate-500 mb-8">
+            {mode === "signin" ? "Enter your credentials to access the cloud portal." : "New accounts start as students until an administrator assigns a role."}
+          </p>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
             {errorMsg && (
               <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-600 text-sm font-semibold">
                 <AlertCircle size={18} className="shrink-0" />
                 {errorMsg}
               </div>
             )}
+            {infoMsg && (
+              <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3 text-emerald-700 text-sm font-semibold">
+                <CheckCircle2 size={18} className="shrink-0" />
+                {infoMsg}
+              </div>
+            )}
 
+            {mode === "signup" && (
+              <div className="relative">
+                <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input type="text" required placeholder="Full Name" value={fullName} onChange={(e) => setFullName(e.target.value)} className={fieldClass} />
+              </div>
+            )}
             <div className="relative">
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input 
-                type="email" 
-                required
-                placeholder="Email Address" 
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
-              />
+              <input type="email" required placeholder="Email Address" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} />
             </div>
             <div className="relative">
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input 
-                type="password" 
-                required
-                placeholder="Password" 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium"
-              />
+              <input type="password" required minLength={8} placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} className={fieldClass} />
             </div>
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               disabled={isLoading}
               className="w-full flex items-center justify-center gap-2 bg-slate-900 text-white py-4 rounded-2xl text-sm font-bold shadow-md hover:bg-slate-800 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {isLoading ? (
-                <><Loader2 size={16} className="animate-spin" /> Authenticating...</>
+                <><Loader2 size={16} className="animate-spin" /> {mode === "signin" ? "Authenticating..." : "Creating account..."}</>
               ) : (
-                <>Connect to Database <ArrowRight size={16} /></>
+                <>{mode === "signin" ? "Connect to Database" : "Create Account"} <ArrowRight size={16} /></>
               )}
             </button>
           </form>
+
+          <button
+            onClick={() => {
+              setMode(mode === "signin" ? "signup" : "signin");
+              setErrorMsg("");
+              setInfoMsg("");
+            }}
+            className="mt-6 text-sm font-semibold text-indigo-600 hover:text-indigo-800"
+          >
+            {mode === "signin" ? "No account yet? Create one" : "Already have an account? Sign in"}
+          </button>
         </div>
       </div>
     </main>

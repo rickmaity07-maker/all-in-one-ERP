@@ -1,305 +1,210 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Search, ShieldCheck, Users, Mail, Plus, Loader2, X, Trash2, Key, Settings, AlertTriangle, ShieldAlert } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { useState } from "react";
+import { createClient } from "@supabase/supabase-js";
+import { ShieldCheck, Users, Mail, Plus, Key, Download, UserX, UserCheck, RefreshCw } from "lucide-react";
+import { supabase, supabaseUrl, supabaseAnonKey } from "@/lib/supabase";
+import { useSession, isAdmin, type Role } from "@/lib/session";
+import { useTable } from "@/lib/useTable";
+import {
+  ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Table, Loading, Badge,
+  AccessDenied, StatCard, inputClass, toast, confirmAction,
+} from "@/components/ui";
+import { downloadCsv, errorMessage, fmtDateTime, initials, matches, type Row } from "@/lib/utils";
+
+const ROLE_COLORS: Record<string, string> = { owner: "purple", administration: "blue", teacher: "orange", student: "green" };
 
 export default function AdminPortal() {
-  const [mounted, setMounted] = useState(false);
+  const { role, profile: me } = useSession();
   const [activeTab, setActiveTab] = useState<"users" | "security">("users");
+  const [search, setSearch] = useState("");
+  const profiles = useTable("profiles", { orderBy: "full_name", ascending: true, enabled: isAdmin(role) });
+  const [logs, setLogs] = useState<Row[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
 
-  // LIVE DATABASE STATE
-  const [profiles, setProfiles] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // MODAL STATE
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [inviteName, setInviteName] = useState("");
-  const [inviteRole, setInviteRole] = useState("student");
+  const [busy, setBusy] = useState(false);
+  const [invite, setInvite] = useState({ full_name: "", email: "", password: "", role: "student" as Role });
 
-  useEffect(() => {
-    setMounted(true);
-    loadProfiles();
-  }, []);
+  const loadLogs = async () => {
+    setLogsLoading(true);
+    const { data, error } = await supabase.from("audit_log").select("*").order("created_at", { ascending: false }).limit(300);
+    if (error) toast(errorMessage(error), "error");
+    setLogs(data ?? []);
+    setLogsLoading(false);
+  };
 
-  async function loadProfiles() {
-    setIsLoading(true);
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*');
+  if (!isAdmin(role)) return <AccessDenied message="Only Administration and Owners can open Global Admin." />;
 
-    if (!error && data) {
-      setProfiles(data);
-    }
-    setIsLoading(false);
-  }
-
-  const handleInviteUser = async (e: React.FormEvent) => {
+  // Creates a real login for the new user. A throw-away client is used so the admin stays signed in.
+  const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteName.trim()) return;
-
-    setIsSubmitting(true);
-    
-    // Generate a UUID for the new user profile
-    const newId = crypto.randomUUID();
-
-    const { data, error } = await supabase
-      .from('profiles')
-      .insert([{ 
-        id: newId,
-        full_name: inviteName, 
-        role: inviteRole 
-      }])
-      .select();
-
-    if (!error && data) {
-      setProfiles([data[0], ...profiles]);
-      setInviteName("");
-      setInviteRole("student");
+    setBusy(true);
+    try {
+      const temp = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false, storageKey: "erp-invite" },
+      });
+      const { data, error } = await temp.auth.signUp({
+        email: invite.email,
+        password: invite.password,
+        options: { data: { full_name: invite.full_name } },
+      });
+      if (error) throw error;
+      const id = data.user?.id;
+      if (!id) throw new Error("Account could not be created.");
+      if (invite.role !== "student") {
+        const { error: roleError } = await supabase.from("profiles").update({ role: invite.role, full_name: invite.full_name }).eq("id", id);
+        if (roleError) throw roleError;
+      }
+      await profiles.reload();
+      toast(data.session ? "User created. Share the temporary password with them." : "User created. They must confirm their email before signing in.");
+      setInvite({ full_name: "", email: "", password: "", role: "student" });
       setIsModalOpen(false);
+    } catch (err) {
+      toast(errorMessage(err), "error");
     }
-    setIsSubmitting(false);
+    setBusy(false);
   };
 
-  const handleRevokeAccess = async (id: string) => {
-    setProfiles(profiles.filter(p => p.id !== id));
-    await supabase.from('profiles').delete().eq('id', id);
+  const changeRole = (p: Row, newRole: string) => profiles.update(p.id, { role: newRole }, `${p.full_name} is now ${newRole}.`);
+
+  const toggleActive = (p: Row) => {
+    const next = p.active === false;
+    if (!next && !confirmAction(`Deactivate ${p.full_name}? They will be signed out and blocked from all data.`)) return;
+    profiles.update(p.id, { active: next }, next ? "Access restored." : "Access revoked.");
   };
 
-  if (!mounted) return null;
-
-  const admins = profiles.filter(p => ["owner", "administration"].includes(p.role));
-  const staff = profiles.filter(p => p.role === "teacher");
-  const students = profiles.filter(p => p.role === "student");
+  const all = profiles.rows;
+  const visible = all.filter((p) => matches(search, p.full_name, p.email, p.role, p.id));
+  const roleOptions: Role[] = role === "owner" ? ["student", "teacher", "administration", "owner"] : ["student", "teacher", "administration"];
 
   return (
-    <div className="flex h-screen w-full overflow-hidden relative">
-
-      {/* INVITE USER MODAL */}
+    <ModuleShell
+      title="Global Admin"
+      icon={ShieldCheck}
+      tabs={[
+        { id: "users", label: "User Directory", group: "Access Control" },
+        { id: "security", label: "Security Logs", group: "Access Control" },
+      ]}
+      activeTab={activeTab}
+      onTab={(t) => {
+        setActiveTab(t);
+        if (t === "security") loadLogs();
+      }}
+      search={search}
+      onSearch={setSearch}
+      searchPlaceholder={activeTab === "users" ? "Search profiles by name, email or role..." : "Search logs by user, table or action..."}
+      action={<ActionButton icon={Plus} onClick={() => setIsModalOpen(true)}>Invite User</ActionButton>}
+    >
       {isModalOpen && (
-        <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-3xl p-8 w-100 shadow-2xl border border-slate-100">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-slate-800">Provision New User</h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700"><X size={20}/></button>
+        <Modal title="Provision New User" icon={Users} onClose={() => setIsModalOpen(false)}>
+          <form onSubmit={handleInvite} className="space-y-4">
+            <Field label="Full Name"><input required className={inputClass} value={invite.full_name} onChange={(e) => setInvite({ ...invite, full_name: e.target.value })} placeholder="e.g. Dr. Weber" /></Field>
+            <Field label="Email"><input type="email" required className={inputClass} value={invite.email} onChange={(e) => setInvite({ ...invite, email: e.target.value })} /></Field>
+            <Field label="Temporary Password"><input required minLength={8} className={inputClass} value={invite.password} onChange={(e) => setInvite({ ...invite, password: e.target.value })} placeholder="At least 8 characters" /></Field>
+            <Field label="System Role">
+              <select className={inputClass} value={invite.role} onChange={(e) => setInvite({ ...invite, role: e.target.value as Role })}>
+                {roleOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </Field>
+            <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex gap-3">
+              <Mail size={16} className="text-blue-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-800 font-medium">A real login is created. If email confirmation is enabled in Supabase, the user must confirm their email first. They can change the password under Settings.</p>
             </div>
-            
-            <form onSubmit={handleInviteUser} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Full Name</label>
-                <input 
-                  type="text" 
-                  required
-                  value={inviteName}
-                  onChange={(e) => setInviteName(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                  placeholder="e.g. Dr. Weber"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">System Role</label>
-                <select 
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none cursor-pointer"
-                >
-                  <option value="student">Student</option>
-                  <option value="teacher">Faculty / Teacher</option>
-                  <option value="administration">Administration</option>
-                  <option value="owner">System Owner</option>
-                </select>
-              </div>
-              
-              <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mt-2 flex gap-3">
-                <Mail size={16} className="text-blue-600 shrink-0 mt-0.5" />
-                <p className="text-xs text-blue-800 font-medium">An invitation email will be simulated, and their profile will be created in the database immediately.</p>
-              </div>
-
-              <button 
-                type="submit" 
-                disabled={isSubmitting}
-                className="w-full mt-4 flex items-center justify-center gap-2 bg-slate-900 text-white py-3.5 rounded-xl text-sm font-bold shadow-md hover:bg-slate-800 transition-colors disabled:opacity-70"
-              >
-                {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : "Send Invitation"}
-              </button>
-            </form>
-          </div>
-        </div>
+            <SubmitButton busy={busy}>Create Account</SubmitButton>
+          </form>
+        </Modal>
       )}
 
-      {/* CONTEXTUAL SIDEBAR */}
-      <aside className="w-72 bg-white/80 backdrop-blur-xl border-r border-slate-100 flex flex-col shrink-0 z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
-        <div className="h-20 flex items-center px-8 border-b border-slate-100">
-          <h2 className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-2">
-            <ShieldCheck size={24} className="text-indigo-600"/> Global Admin
-          </h2>
-        </div>
-        <div className="flex-1 overflow-y-auto p-6 space-y-8">
-          <div>
-            <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">Access Control</h3>
-            <ul className="space-y-2">
-              <li>
-                <button 
-                  onClick={() => setActiveTab("users")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "users" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-indigo-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
-                >
-                  User Directory
-                </button>
-              </li>
-              <li>
-                <button 
-                  onClick={() => setActiveTab("security")}
-                  className={`w-full text-left px-4 py-3 text-sm font-bold rounded-2xl transition-all ${activeTab === "security" ? "bg-linear-to-r from-blue-50 to-indigo-50 text-indigo-700 shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
-                >
-                  Security Logs
-                </button>
-              </li>
-            </ul>
+      {activeTab === "users" ? (
+        <>
+          <PageHeading title="Identity & Access Management" subtitle="Manage user accounts, permission levels, and system access." />
+          <div className="grid grid-cols-3 gap-6 mb-8">
+            <StatCard label="Admins & Owners" value={`${all.filter((p) => ["owner", "administration"].includes(p.role)).length} Users`} icon={ShieldCheck} color="indigo" />
+            <StatCard label="Faculty Staff" value={`${all.filter((p) => p.role === "teacher").length} Users`} icon={Key} color="blue" />
+            <StatCard label="Students" value={`${all.filter((p) => p.role === "student").length} Users`} icon={Users} color="emerald" />
           </div>
-        </div>
-      </aside>
 
-      {/* MAIN WORKSPACE */}
-      <main className="flex-1 bg-[#F4F7FE] flex flex-col min-w-0 overflow-y-auto">
-        <header className="h-24 flex items-center justify-between px-10 shrink-0">
-          <div className="relative w-96 shadow-[0_4px_20px_rgba(0,0,0,0.03)] rounded-2xl">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input type="text" placeholder="Search profiles by name or role..." className="w-full pl-12 pr-4 py-3.5 bg-white border-none rounded-2xl text-sm outline-none font-medium" />
-          </div>
-          <button 
-            onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 bg-slate-900 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-md hover:bg-slate-800 transition-colors"
+          <Card
+            title="Global Directory"
+            action={
+              <button
+                onClick={() => downloadCsv("users.csv", visible, [{ key: "full_name", label: "Name" }, { key: "email", label: "Email" }, { key: "role", label: "Role" }, { key: "active", label: "Active" }])}
+                className="flex items-center gap-2 text-blue-600 font-bold text-sm hover:bg-blue-50 px-4 py-2 rounded-xl"
+              >
+                <Download size={16} /> Export CSV
+              </button>
+            }
           >
-            <Plus size={18} /> Invite User
-          </button>
-        </header>
-
-        <div className="px-10 pb-10">
-          
-          <div className="flex justify-between items-end mb-6 mt-2">
-            <div>
-              <h1 className="text-3xl font-black text-slate-800 mb-2">
-                {activeTab === "users" ? "Identity & Access Management" : "System Security Logs"}
-              </h1>
-              <p className="text-slate-500 font-medium">
-                {activeTab === "users" ? "Manage user accounts, permission levels, and system access." : "Monitor login attempts, database interactions, and administrative actions."}
-              </p>
-            </div>
-          </div>
-
-          {activeTab === "users" ? (
-            // ==========================================
-            // VIEW 1: USER DIRECTORY
-            // ==========================================
-            <>
-              {/* METRICS ROW */}
-              <div className="grid grid-cols-3 gap-6 mb-8">
-                <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
-                    <ShieldCheck size={28} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Admins & Owners</p>
-                    <h3 className="text-2xl font-black text-slate-800">{admins.length} Users</h3>
-                  </div>
-                </div>
-                <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
-                    <Key size={28} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Faculty Staff</p>
-                    <h3 className="text-2xl font-black text-slate-800">{staff.length} Users</h3>
-                  </div>
-                </div>
-                <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
-                    <Users size={28} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Active Students</p>
-                    <h3 className="text-2xl font-black text-slate-800">{students.length} Users</h3>
-                  </div>
-                </div>
-              </div>
-
-              {/* USERS TABLE */}
-              <div className="bg-white rounded-4xl p-8 shadow-sm border border-slate-100">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-xl font-bold text-slate-800">Global Directory</h3>
-                </div>
-                
-                <div className="overflow-hidden rounded-2xl border border-slate-100">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50/50 text-slate-500 border-b border-slate-100">
-                      <tr>
-                        <th className="px-6 py-4 font-bold">User</th>
-                        <th className="px-6 py-4 font-bold">System Role</th>
-                        <th className="px-6 py-4 font-bold">Account ID</th>
-                        <th className="px-6 py-4 font-bold text-right">Access Control</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {isLoading ? (
-                        <tr><td colSpan={4} className="px-6 py-8 text-center text-slate-500"><Loader2 className="animate-spin inline mr-2" /> Loading users...</td></tr>
-                      ) : profiles.length === 0 ? (
-                        <tr><td colSpan={4} className="px-6 py-8 text-center text-slate-400">No users found in the system. Invite someone!</td></tr>
-                      ) : (
-                        profiles.map((profile) => (
-                          <tr key={profile.id} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="px-6 py-4">
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-xs shrink-0">
-                                  {profile.full_name.substring(0,2).toUpperCase()}
-                                </div>
-                                <span className="font-bold text-slate-800">{profile.full_name}</span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <span className={`px-3 py-1 rounded-xl text-xs font-bold uppercase tracking-wider ${
-                                profile.role === 'owner' ? 'bg-purple-100 text-purple-700' :
-                                profile.role === 'administration' ? 'bg-indigo-100 text-indigo-700' :
-                                profile.role === 'teacher' ? 'bg-blue-100 text-blue-700' :
-                                'bg-emerald-100 text-emerald-700'
-                              }`}>
-                                {profile.role}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 font-mono text-xs text-slate-400 truncate max-w-37.5">
-                              {profile.id}
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                              <button 
-                                onClick={() => handleRevokeAccess(profile.id)} 
-                                className="text-xs font-bold text-red-600 bg-red-50 px-3 py-1.5 rounded-lg hover:bg-red-100 transition-colors"
-                              >
-                                Revoke Access
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
-          ) : (
-            // ==========================================
-            // VIEW 2: SECURITY LOGS
-            // ==========================================
-            <div className="bg-white rounded-4xl p-8 shadow-sm border border-slate-100 flex flex-col items-center justify-center py-24 text-center">
-               <div className="w-20 h-20 bg-slate-50 text-slate-300 rounded-full flex items-center justify-center mb-4 border border-slate-100">
-                 <ShieldAlert size={32} />
-               </div>
-               <h2 className="text-xl font-bold text-slate-700 mb-2">No Anomalies Detected</h2>
-               <p className="text-slate-500 max-w-md">System telemetry and PostgreSQL access logs are operating normally. Database row-level security is active.</p>
-            </div>
-          )}
-
-        </div>
-      </main>
-    </div>
+            {profiles.loading ? (
+              <Loading label="Loading users..." />
+            ) : (
+              <Table headers={["User", "System Role", "Status", "Actions"]} empty={visible.length === 0 && "No users found."}>
+                {visible.map((p) => {
+                  const isSelf = p.id === me?.id;
+                  const locked = isSelf || (p.role === "owner" && role !== "owner");
+                  return (
+                    <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-xs shrink-0">{initials(p.full_name)}</div>
+                          <div>
+                            <div className="font-bold text-slate-800">{p.full_name} {isSelf && <span className="text-xs text-slate-400">(you)</span>}</div>
+                            <div className="text-xs text-slate-400">{p.email || p.id}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        {locked ? (
+                          <Badge color={ROLE_COLORS[p.role]}>{p.role}</Badge>
+                        ) : (
+                          <select value={p.role} onChange={(e) => changeRole(p, e.target.value)} className="text-xs font-bold uppercase tracking-wider rounded-xl px-2 py-1 bg-slate-100 text-slate-700 outline-none cursor-pointer">
+                            {roleOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">{p.active === false ? <Badge color="red">Revoked</Badge> : <Badge color="green">Active</Badge>}</td>
+                      <td className="px-6 py-4 text-right">
+                        {!locked && (
+                          <button
+                            onClick={() => toggleActive(p)}
+                            className={`inline-flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${p.active === false ? "text-emerald-600 bg-emerald-50 hover:bg-emerald-100" : "text-red-600 bg-red-50 hover:bg-red-100"}`}
+                          >
+                            {p.active === false ? <><UserCheck size={14} /> Restore Access</> : <><UserX size={14} /> Revoke Access</>}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </Table>
+            )}
+          </Card>
+        </>
+      ) : (
+        <>
+          <PageHeading title="System Security Logs" subtitle="Every create, update and delete on sensitive records, with who did it.">
+            <button onClick={loadLogs} className="flex items-center gap-2 text-indigo-600 font-bold text-sm hover:bg-indigo-50 px-4 py-2 rounded-xl"><RefreshCw size={16} /> Refresh</button>
+          </PageHeading>
+          <Card title="Latest 300 events">
+            {logsLoading ? (
+              <Loading label="Loading audit trail..." />
+            ) : (
+              <Table headers={["When", "User", "Action", "Module", "Record"]} empty={logs.length === 0 && "No activity recorded yet."}>
+                {logs.filter((l) => matches(search, l.actor_name, l.table_name, l.action)).map((l) => (
+                  <tr key={l.id}>
+                    <td className="px-6 py-3 text-xs text-slate-500 whitespace-nowrap">{fmtDateTime(l.created_at)}</td>
+                    <td className="px-6 py-3 font-semibold text-slate-700">{l.actor_name || "System"}</td>
+                    <td className="px-6 py-3"><Badge color={l.action === "DELETE" ? "red" : l.action === "INSERT" ? "green" : "blue"}>{l.action}</Badge></td>
+                    <td className="px-6 py-3 text-slate-600">{String(l.table_name).replace(/_/g, " ")}</td>
+                    <td className="px-6 py-3 font-mono text-xs text-slate-400">{String(l.record_id ?? "").substring(0, 8)}</td>
+                  </tr>
+                ))}
+              </Table>
+            )}
+          </Card>
+        </>
+      )}
+    </ModuleShell>
   );
 }

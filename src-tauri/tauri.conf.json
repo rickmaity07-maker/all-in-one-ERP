@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "all-in-one-erp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.allinoneerp.app",
   "build": {
     "frontendDist": "../out",
@@ -12,9 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "all-in-one-erp",
-        "width": 800,
-        "height": 600,
+        "title": "All-In-One ERP",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 700,
+        "center": true,
         "resizable": true,
         "fullscreen": false
       }
@@ -26,6 +29,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -35,6 +39,17 @@
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlFRUVDMTg2QTVBOUYzRTEKUldUaDg2bWxoc0h1bm94OWlRRXFXSC9ud3BmZjVnSjhldDVSR25GS25UOWVqTmtsOGY2OGxmREgK",
+      "endpoints": [
+        "https://github.com/rickmaity07-maker/all-in-one-ERP/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

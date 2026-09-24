@@ -1,0 +1,52 @@
+# Builds a signed Windows installer and publishes it as a GitHub Release.
+# Installed apps check .../releases/latest/download/latest.json and offer the update automatically.
+#
+# Trigger: push a tag like v0.3.0 (see README → Releasing an update).
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.tauri/all-in-one-erp.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  contents of ~/.tauri/all-in-one-erp.key.password
+#   NEXT_PUBLIC_SUPABASE_URL            Supabase project URL
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY       Supabase anon (public) key — never the service_role key
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        with:
+          tagName: v__VERSION__
+          releaseName: All-In-One ERP v__VERSION__
+          releaseBody: See the assets below. Installed apps will offer this update automatically.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true

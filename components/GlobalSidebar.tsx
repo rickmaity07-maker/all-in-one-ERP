@@ -2,49 +2,42 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { 
-  Book, CheckSquare, Shield, User, MessageSquare, 
-  Calendar, Wallet, LogOut, GraduationCap, Building, 
+import {
+  Book, CheckSquare, Shield, MessageSquare,
+  Calendar, Wallet, LogOut, GraduationCap, Building,
   ClipboardCheck, Users as UsersIcon, Menu, ChevronLeft,
-  Cpu, Briefcase, Library, Ticket, Car
+  Cpu, Briefcase, Library, Ticket, Car, LayoutDashboard, Settings,
+  School, UserCheck, BookMarked, Megaphone, Plane,
+  type LucideIcon,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useSession, type Role } from "@/lib/session";
+import { initials } from "@/lib/utils";
 
 export default function GlobalSidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  
-  const [userRole, setUserRole] = useState<string>("student");
-  const [mounted, setMounted] = useState(false);
+  const { profile, role, signOut } = useSession();
   const [isExpanded, setIsExpanded] = useState(false);
 
-  useEffect(() => {
-    setMounted(true);
-    const savedRole = localStorage.getItem("erp_mock_role");
-    if (savedRole) setUserRole(savedRole);
-  }, [pathname]);
-
   if (pathname === "/") return null;
-  if (!mounted) return null;
 
   const isActive = (path: string) => pathname.startsWith(path);
-  const handleLogout = () => {
-    localStorage.removeItem("erp_mock_role");
+  const handleLogout = async () => {
+    await signOut();
     router.push("/");
   };
 
   // Helper function to keep our link rendering extremely clean
-  const renderLink = (path: string, icon: any, label: string, visibleRoles?: string[]) => {
-    if (visibleRoles && !visibleRoles.includes(userRole)) return null;
-    
+  const renderLink = (path: string, Icon: LucideIcon, label: string, visibleRoles?: Role[]) => {
+    if (visibleRoles && !visibleRoles.includes(role)) return null;
     const active = isActive(path);
-    const Icon = icon;
-    
+
     return (
-      <Link 
-        href={path} 
+      <Link
+        href={path}
         title={!isExpanded ? label : ""}
-        className={`flex items-center rounded-2xl transition-all group overflow-hidden ${
+        className={`flex items-center rounded-2xl transition-all group overflow-hidden shrink-0 ${
           active ? "text-white bg-white/20 shadow-[0_4px_12px_rgba(255,255,255,0.1)]" : "text-white/50 hover:text-white hover:bg-white/10"
         } ${isExpanded ? "px-4 py-3 justify-start w-full" : "w-12 h-12 justify-center mx-auto"}`}
       >
@@ -56,13 +49,13 @@ export default function GlobalSidebar() {
 
   return (
     <nav className={`bg-linear-to-b from-[#2A0845] to-[#6441A5] flex flex-col items-center py-6 justify-between shrink-0 shadow-[4px_0_24px_rgba(100,65,165,0.15)] z-20 transition-all duration-300 ease-in-out overflow-y-auto hide-scrollbar ${isExpanded ? "w-64" : "w-20"}`}>
-      
+
       <div className={`flex flex-col gap-2 w-full ${isExpanded ? "px-6" : "px-4"}`}>
-        
+
         {/* Toggle Button & Header */}
         <div className={`flex w-full items-center mb-4 ${isExpanded ? "justify-between" : "justify-center"}`}>
           {isExpanded && <span className="font-black text-white text-lg tracking-tight whitespace-nowrap">Kern OS</span>}
-          <button 
+          <button
             onClick={() => setIsExpanded(!isExpanded)}
             className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-xl transition-all"
           >
@@ -71,46 +64,58 @@ export default function GlobalSidebar() {
         </div>
 
         {/* Workspace Brand / Role Indicator */}
-        <div className={`shrink-0 bg-white/10 rounded-2xl flex items-center justify-center text-white mb-4 shadow-inner border border-white/20 transition-all ${isExpanded ? "py-3 px-4 justify-between w-full" : "w-12 h-12 flex-col mx-auto"}`}>
+        <div className={`shrink-0 bg-white/10 rounded-2xl flex items-center justify-center text-white mb-4 shadow-inner border border-white/20 transition-all ${isExpanded ? "py-3 px-4 justify-between w-full gap-3" : "w-12 h-12 flex-col mx-auto"}`}>
           {!isExpanded ? (
             <>
               <span className="font-bold text-[9px] uppercase tracking-wider text-white/90">Role</span>
-              <span className="text-[10px] uppercase font-black text-cyan-400">{userRole.substring(0,3)}</span>
+              <span className="text-[10px] uppercase font-black text-cyan-400">{role.substring(0, 3)}</span>
             </>
           ) : (
             <>
-              <span className="font-bold text-xs uppercase tracking-wider text-white/90">Current Role</span>
-              <span className="text-xs uppercase font-black text-cyan-400">{userRole}</span>
+              <span className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-bold text-xs shrink-0">{initials(profile?.full_name)}</span>
+              <span className="flex-1 min-w-0">
+                <span className="block font-bold text-xs truncate">{profile?.full_name}</span>
+                <span className="block text-[10px] uppercase font-black text-cyan-400">{role}</span>
+              </span>
             </>
           )}
         </div>
-        
+
         {/* Navigation Links */}
+        {renderLink("/dashboard", LayoutDashboard, "Dashboard")}
+        {renderLink("/announcements", Megaphone, "Notice Board")}
+
+        {/* TEACHING */}
+        {renderLink("/classes", School, "Classes & Timetable")}
+        {renderLink("/attendance", UserCheck, "Attendance")}
+        {renderLink("/gradebook", BookMarked, "Gradebook")}
         {renderLink("/e-learning", Book, "E-Learning")}
         {renderLink("/exams", ClipboardCheck, "Examinations")}
         {renderLink("/registrar", GraduationCap, "Registrar (SIS)")}
         {renderLink("/housing", Building, "Housing & Facilities")}
         {renderLink("/chat", MessageSquare, "Communications")}
         {renderLink("/calendar", Calendar, "Master Calendar")}
+        {renderLink("/leave", Plane, "Leave & Absence")}
 
-        {/* NEW PHASE 2 CAMPUS MODULES */}
+        {/* PHASE 2 CAMPUS MODULES */}
         {renderLink("/makerspace", Cpu, "MakerSpace & Labs")}
         {renderLink("/careers", Briefcase, "Career & Portfolio")}
         {renderLink("/library", Library, "Digital Library")}
         {renderLink("/campus-life", Ticket, "Student Life")}
         {renderLink("/logistics", Car, "Logistics & Transport")}
-        
+
         {/* Role-Restricted Links */}
         {renderLink("/tasks", CheckSquare, "Task Management", ["owner", "administration", "teacher"])}
         {renderLink("/admissions", UsersIcon, "Admissions CRM", ["owner", "administration"])}
-        {renderLink("/finance", Wallet, "Finance & Billing", ["owner", "administration"])}
+        {renderLink("/finance", Wallet, "Finance & Billing", ["owner", "administration", "student"])}
         {renderLink("/admin", Shield, "Global Admin", ["owner", "administration"])}
       </div>
-      
+
       {/* Bottom Profile / Logout */}
       <div className={`flex flex-col gap-2 w-full mt-4 shrink-0 ${isExpanded ? "px-6" : "px-4"}`}>
-        <button 
-          onClick={handleLogout} 
+        {renderLink("/settings", Settings, "Settings & Updates")}
+        <button
+          onClick={handleLogout}
           title={!isExpanded ? "Log Out" : ""}
           className={`flex items-center text-pink-400 hover:text-pink-300 hover:bg-pink-500/20 rounded-2xl transition-all ${isExpanded ? "px-4 py-3 justify-start w-full" : "w-12 h-12 justify-center mx-auto"}`}
         >
