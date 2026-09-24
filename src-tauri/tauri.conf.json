@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "all-in-one-erp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "com.allinoneerp.app",
   "build": {
     "frontendDist": "../out",
@@ -23,7 +23,18 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self' ipc: http://ipc.localhost",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob: https:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost https://*.supabase.co wss://*.supabase.co",
+        "frame-src": "'self' about: blob:",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'self'"
+      }
     }
   },
   "bundle": {

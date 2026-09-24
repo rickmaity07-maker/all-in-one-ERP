@@ -9,11 +9,11 @@ import {
   ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Table, Loading, Badge,
   AccessDenied, IconButton, inputClass, confirmAction,
 } from "@/components/ui";
-import { downloadCsv, escapeHtml, fmtDate, matches, money, printDocument, type Row } from "@/lib/utils";
+import { downloadCsv, escapeHtml, fmtDate, matches, money, printDocument, localDate, type Row } from "@/lib/utils";
 
 type TabId = "overview" | "invoices" | "expenses";
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localDate();
 const isOverdue = (inv: Row) => inv.status === "Pending" && inv.due_date && inv.due_date < today();
 
 function printInvoice(inv: Row) {
@@ -129,7 +129,7 @@ export default function FinancePortal() {
         { id: "invoices" as TabId, label: "Student Tuition Invoices", group: "Financial Views" },
         { id: "expenses" as TabId, label: "Expenses & Payroll", group: "Financial Views" },
       ]
-    : [{ id: "invoices" as TabId, label: "My Invoices", group: "Billing" }];
+    : [{ id: "invoices" as TabId, label: role === "parent" ? "Family Invoices" : "My Invoices", group: "Billing" }];
 
   return (
     <ModuleShell
@@ -171,7 +171,7 @@ export default function FinancePortal() {
             <Field label="Description">
               <input required className={inputClass} value={inv.description} onChange={(e) => setInv({ ...inv, description: e.target.value })} />
             </Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Amount ($)">
                 <input type="number" step="0.01" min="0" required className={inputClass} value={inv.amount} onChange={(e) => setInv({ ...inv, amount: e.target.value })} />
               </Field>
@@ -193,7 +193,7 @@ export default function FinancePortal() {
               </select>
             </Field>
             <Field label="Description"><input required className={inputClass} value={exp.description} onChange={(e) => setExp({ ...exp, description: e.target.value })} /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Amount ($)"><input type="number" step="0.01" min="0" required className={inputClass} value={exp.amount} onChange={(e) => setExp({ ...exp, amount: e.target.value })} /></Field>
               <Field label="Date"><input type="date" required className={inputClass} value={exp.expense_date} onChange={(e) => setExp({ ...exp, expense_date: e.target.value })} /></Field>
             </div>
@@ -205,7 +205,7 @@ export default function FinancePortal() {
       {activeTab === "overview" ? (
         <>
           <PageHeading title="Financial Dashboard" subtitle="High-level overview of revenue and outstanding balances." />
-          <div className="grid grid-cols-3 gap-8 mb-10">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
             <div className="bg-linear-to-br from-cyan-400 to-blue-600 rounded-4xl p-8 text-white shadow-lg relative overflow-hidden group">
               <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
               <p className="text-cyan-100 font-semibold tracking-wide text-sm mb-2 uppercase">Collected Revenue ({year})</p>
@@ -239,20 +239,20 @@ export default function FinancePortal() {
               <Loading />
             ) : (
               <>
-                <div className="flex items-end gap-6 h-56 border-b border-slate-100 pb-2">
+                <div className="flex items-end gap-2 md:gap-6 h-56 border-b border-slate-100 pb-2">
                   {months.map((m) => (
-                    <div key={m.label} className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
+                    <div key={m.label} className="flex-1 min-w-0 flex flex-col items-center gap-2 h-full justify-end">
                       <div className="flex items-end gap-1.5 h-full w-full justify-center">
-                        <div className="w-5 bg-linear-to-t from-blue-600 to-cyan-400 rounded-t-lg" style={{ height: `${(m.inc / maxBar) * 100}%` }} title={`Collected ${money(m.inc)}`} />
-                        <div className="w-5 bg-linear-to-t from-[#8A2387] to-[#E94057] rounded-t-lg" style={{ height: `${(m.out / maxBar) * 100}%` }} title={`Expenses ${money(m.out)}`} />
+                        <div className="w-3 md:w-5 bg-linear-to-t from-blue-600 to-cyan-400 rounded-t-lg" style={{ height: `${(m.inc / maxBar) * 100}%` }} title={`Collected ${money(m.inc)}`} />
+                        <div className="w-3 md:w-5 bg-linear-to-t from-[#8A2387] to-[#E94057] rounded-t-lg" style={{ height: `${(m.out / maxBar) * 100}%` }} title={`Expenses ${money(m.out)}`} />
                       </div>
                     </div>
                   ))}
                 </div>
-                <div className="flex gap-6 mt-2">
+                <div className="flex gap-2 md:gap-6 mt-2">
                   {months.map((m) => <div key={m.label} className="flex-1 text-center text-xs font-bold text-slate-500">{m.label}</div>)}
                 </div>
-                <div className="flex gap-6 mt-6 text-xs font-bold text-slate-500">
+                <div className="flex flex-wrap gap-3 md:gap-6 mt-6 text-xs font-bold text-slate-500">
                   <span className="flex items-center gap-2"><span className="w-3 h-3 rounded bg-blue-500" /> Collected</span>
                   <span className="flex items-center gap-2"><span className="w-3 h-3 rounded bg-pink-500" /> Expenses</span>
                   <span className="flex items-center gap-2 ml-auto"><TrendingUp size={14} /> Hover bars for exact values</span>
@@ -264,7 +264,7 @@ export default function FinancePortal() {
       ) : activeTab === "invoices" ? (
         <>
           <PageHeading
-            title={admin ? "Tuition & Billing Accounts" : "My Invoices"}
+            title={admin ? "Tuition & Billing Accounts" : role === "parent" ? "Family Invoices" : "My Invoices"}
             subtitle={admin ? "Manage student invoices, track payments, and export records." : "Your tuition and fee invoices. Print any invoice for your records."}
           />
           <Card

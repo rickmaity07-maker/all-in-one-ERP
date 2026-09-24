@@ -5,7 +5,7 @@ import { Ticket, Plus, Users, CalendarDays, MapPin, Trash2, UserPlus, UserMinus,
 import { useSession, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Loading, Empty, Badge, IconButton, inputClass, toast, confirmAction } from "@/components/ui";
-import { initials, matches, type Row } from "@/lib/utils";
+import { initials, matches, localDate, type Row } from "@/lib/utils";
 
 type TabId = "events" | "clubs";
 
@@ -25,7 +25,7 @@ export default function CampusLife() {
   const [evt, setEvt] = useState({ title: "", event_date: "", location: "", capacity: "", description: "" });
   const [attendeesOf, setAttendeesOf] = useState<Row | null>(null);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
   const membersOf = (id: string) => members.rows.filter((m) => m.club_id === id);
   const rsvpsOf = (id: string) => rsvps.rows.filter((r) => r.event_id === id);
   const myMembership = (id: string) => members.rows.find((m) => m.club_id === id && m.member_id === profile?.id);
@@ -98,7 +98,7 @@ export default function CampusLife() {
             className="space-y-4"
           >
             <Field label="Title"><input required className={inputClass} value={evt.title} onChange={(e) => setEvt({ ...evt, title: e.target.value })} /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Date"><input type="date" min={today} required className={inputClass} value={evt.event_date} onChange={(e) => setEvt({ ...evt, event_date: e.target.value })} /></Field>
               <Field label="Capacity (blank = unlimited)"><input type="number" min="1" className={inputClass} value={evt.capacity} onChange={(e) => setEvt({ ...evt, capacity: e.target.value })} /></Field>
             </div>
@@ -135,7 +135,7 @@ export default function CampusLife() {
           {upcoming.length === 0 ? (
             <Empty>No upcoming events.</Empty>
           ) : (
-            <div className="grid grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {upcoming.map((e) => {
                 const count = rsvpsOf(e.id).length;
                 const full = e.capacity && count >= e.capacity;
@@ -179,7 +179,7 @@ export default function CampusLife() {
           {visibleClubs.length === 0 ? (
             <Empty>No clubs yet.</Empty>
           ) : (
-            <div className="grid grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {visibleClubs.map((c) => {
                 const joined = !!myMembership(c.id);
                 const list = membersOf(c.id);

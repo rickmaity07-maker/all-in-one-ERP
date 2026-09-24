@@ -5,7 +5,7 @@ import { Briefcase, Plus, MapPin, CalendarClock, ExternalLink, Trash2, Send, Fol
 import { useSession, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Table, Loading, Empty, Badge, IconButton, inputClass, toast, confirmAction } from "@/components/ui";
-import { fmtDate, initials, matches, openExternal } from "@/lib/utils";
+import { fmtDate, initials, matches, openExternal, localDate } from "@/lib/utils";
 
 type TabId = "jobs" | "applications" | "portfolio";
 const APP_STATUSES = ["Submitted", "Shortlisted", "Interview", "Offer", "Rejected"];
@@ -28,7 +28,7 @@ export default function Careers() {
   const [post, setPost] = useState({ title: "", company: "", posting_type: "Internship", location: "", deadline: "", link: "", description: "" });
   const [proj, setProj] = useState({ title: "", description: "", url: "" });
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
   const postingOf = (id: string) => postings.rows.find((p) => p.id === id);
   const myApp = (postingId: string) => applications.rows.find((a) => a.posting_id === postingId && a.applicant_id === profile?.id);
 
@@ -92,11 +92,11 @@ export default function Careers() {
       {modal === "posting" && (
         <Modal title="Post Opportunity" icon={Briefcase} onClose={() => setModal("")} wide>
           <form onSubmit={submitPosting} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Role Title"><input required className={inputClass} value={post.title} onChange={(e) => setPost({ ...post, title: e.target.value })} /></Field>
               <Field label="Company"><input required className={inputClass} value={post.company} onChange={(e) => setPost({ ...post, company: e.target.value })} /></Field>
             </div>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Field label="Type">
                 <select className={inputClass} value={post.posting_type} onChange={(e) => setPost({ ...post, posting_type: e.target.value })}>
                   {["Internship", "Working Student", "Full-time", "Thesis"].map((t) => <option key={t}>{t}</option>)}
@@ -135,7 +135,7 @@ export default function Careers() {
           {jobs.length === 0 ? (
             <Empty>No opportunities posted yet.</Empty>
           ) : (
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {jobs.map((p) => {
                 const mine = myApp(p.id);
                 const closed = p.deadline && p.deadline < today;
@@ -214,7 +214,7 @@ export default function Careers() {
           ) : projects.length === 0 ? (
             <Empty>No projects yet — be the first to add one.</Empty>
           ) : (
-            <div className="grid grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {projects.map((p) => (
                 <div key={p.id} className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex flex-col">
                   <div className="w-12 h-12 rounded-2xl bg-linear-to-br from-[#2A0845] to-[#6441A5] text-white flex items-center justify-center mb-4"><FolderGit2 size={22} /></div>

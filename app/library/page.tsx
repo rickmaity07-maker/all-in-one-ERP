@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { useSession, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Table, Loading, Badge, StatCard, IconButton, inputClass, toast, confirmAction } from "@/components/ui";
-import { errorMessage, fmtDate, matches, openStoredFile, removeStoredFile, uploadFile, type Row } from "@/lib/utils";
+import { errorMessage, fmtDate, matches, openStoredFile, removeStoredFile, uploadFile, localDate, type Row } from "@/lib/utils";
 
 type TabId = "catalog" | "loans";
 const BUCKET = "library-files";
@@ -14,7 +14,7 @@ const LOAN_DAYS = 21;
 const addDays = (n: number) => {
   const d = new Date();
   d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
+  return localDate(d);
 };
 
 export default function DigitalLibrary() {
@@ -37,7 +37,7 @@ export default function DigitalLibrary() {
     if (staff) supabase.from("profiles").select("id, full_name").order("full_name").then(({ data }) => setPeople(data ?? []));
   }, [staff]);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
   const titleOf = (id: string) => books.rows.find((b) => b.id === id)?.title ?? "Removed title";
   const active = loans.rows.filter((l) => !l.returned_at);
   const overdue = active.filter((l) => l.due_date < today);
@@ -127,11 +127,11 @@ export default function DigitalLibrary() {
         <Modal title="Add Title" icon={BookOpen} onClose={() => setModal("")}>
           <form onSubmit={submitBook} className="space-y-4">
             <Field label="Title"><input required className={inputClass} value={bookForm.title} onChange={(e) => setBookForm({ ...bookForm, title: e.target.value })} /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Author"><input className={inputClass} value={bookForm.author} onChange={(e) => setBookForm({ ...bookForm, author: e.target.value })} /></Field>
               <Field label="ISBN"><input className={inputClass} value={bookForm.isbn} onChange={(e) => setBookForm({ ...bookForm, isbn: e.target.value })} /></Field>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Category"><input className={inputClass} value={bookForm.category} onChange={(e) => setBookForm({ ...bookForm, category: e.target.value })} /></Field>
               <Field label="Physical Copies"><input type="number" min="0" className={inputClass} value={bookForm.copies_total} onChange={(e) => setBookForm({ ...bookForm, copies_total: e.target.value })} /></Field>
             </div>
@@ -171,7 +171,7 @@ export default function DigitalLibrary() {
               {categories.map((c) => <option key={c}>{c}</option>)}
             </select>
           </PageHeading>
-          <div className="grid grid-cols-3 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <StatCard label="Titles" value={books.rows.length} icon={BookOpen} color="indigo" />
             <StatCard label="On Loan" value={active.length} icon={BookMarked} color="blue" />
             <StatCard label={staff ? "Overdue" : "My Overdue"} value={staff ? overdue.length : myActive.filter((l) => l.due_date < today).length} icon={AlertTriangle} color="red" />

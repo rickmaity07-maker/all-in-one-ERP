@@ -87,7 +87,7 @@ export default function ExamsPortal() {
           <form onSubmit={handleAddExam} className="space-y-4">
             <Field label="Course Name"><input required className={inputClass} value={exam.course_name} onChange={(e) => setExam({ ...exam, course_name: e.target.value })} placeholder="e.g. MEC-401 Advanced Kinematics" /></Field>
             <Field label="Exam Date & Time"><input type="datetime-local" required className={inputClass} value={exam.exam_date} onChange={(e) => setExam({ ...exam, exam_date: e.target.value })} /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Location"><input className={inputClass} value={exam.location} onChange={(e) => setExam({ ...exam, location: e.target.value })} /></Field>
               <Field label="Duration (min)"><input type="number" min="5" className={inputClass} value={exam.duration_minutes} onChange={(e) => setExam({ ...exam, duration_minutes: e.target.value })} /></Field>
             </div>
@@ -109,7 +109,7 @@ export default function ExamsPortal() {
           <form onSubmit={handleAddFlag} className="space-y-4">
             <Field label="Student"><input required className={inputClass} value={flag.student_name} onChange={(e) => setFlag({ ...flag, student_name: e.target.value })} /></Field>
             <Field label="Assessment / Course"><input required className={inputClass} value={flag.assessment} onChange={(e) => setFlag({ ...flag, assessment: e.target.value })} placeholder="e.g. MEC-401 Final Essay" /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Similarity %"><input type="number" min="0" max="100" required className={inputClass} value={flag.similarity} onChange={(e) => setFlag({ ...flag, similarity: e.target.value })} /></Field>
               <Field label="Detected Source"><input className={inputClass} value={flag.source} onChange={(e) => setFlag({ ...flag, source: e.target.value })} /></Field>
             </div>
@@ -128,7 +128,7 @@ export default function ExamsPortal() {
             <Field label="Investigation Notes">
               <textarea rows={4} className={inputClass} defaultValue={reviewing.notes ?? ""} id="flag-notes" />
             </Field>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               {[
                 { s: "Under Review", c: "bg-orange-500 hover:bg-orange-600" },
                 { s: "Confirmed", c: "bg-red-500 hover:bg-red-600" },
@@ -155,8 +155,8 @@ export default function ExamsPortal() {
       ) : activeTab === "schedule" ? (
         <>
           <PageHeading title="Academic Assessment" subtitle={canManage ? "Manage upcoming exams, seating allocations, and integrity reports." : "Your upcoming exams, times and rooms."} />
-          <div className={`grid gap-8 ${canManage ? "grid-cols-3" : "grid-cols-2"}`}>
-            <Card title={`Exams (${visibleExams.length})`} className="col-span-2">
+          <div className={`grid gap-8 ${canManage ? "grid-cols-1 md:grid-cols-3" : "grid-cols-1 md:grid-cols-2"}`}>
+            <Card title={`Exams (${visibleExams.length})`} className="md:col-span-2">
               {visibleExams.length === 0 ? (
                 <Empty>No exams scheduled.</Empty>
               ) : (
@@ -220,7 +220,7 @@ export default function ExamsPortal() {
       ) : (
         <>
           <PageHeading title="Academic Integrity Console" subtitle="Review plagiarism flags and code similarity reports." />
-          <div className="grid grid-cols-3 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <StatCard label="Active Flags" value={`${openFlags.length} Pending`} icon={ShieldX} color="red" />
             <StatCard label="Resolved" value={`${cleared.length} Closed`} icon={CheckCircle2} color="emerald" />
             <StatCard label="Total Logged" value={`${flags.rows.length} Cases`} icon={Search} color="blue" />

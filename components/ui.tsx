@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { cloneElement, isValidElement, useEffect, useId, useState } from "react";
 import { Search, X, Loader2, ShieldAlert, CheckCircle2, AlertCircle, type LucideIcon } from "lucide-react";
 
 export const inputClass =
@@ -56,17 +56,22 @@ export function Modal({
   children: React.ReactNode;
   wide?: boolean;
 }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
-    <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-6" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label={title} className="fixed md:absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-3 md:p-6" onClick={onClose}>
       <div
-        className={`bg-white rounded-3xl p-8 shadow-2xl border border-slate-100 max-h-full overflow-y-auto ${wide ? "w-160" : "w-110"}`}
+        className={`bg-white rounded-3xl p-5 md:p-8 shadow-2xl border border-slate-100 max-h-full overflow-y-auto w-full ${wide ? "max-w-160" : "max-w-110"}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
             {Icon && <Icon size={20} className="text-indigo-600" />} {title}
           </h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">
+          <button onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-700">
             <X size={20} />
           </button>
         </div>
@@ -76,11 +81,40 @@ export function Modal({
   );
 }
 
-export function Field({ label, children }: { label: string; children: React.ReactNode }) {
+// Wrapping the control in <label> ties the caption to the input for screen readers (and getByLabel in tests).
+// Use group for fields that hold several buttons rather than one input.
+export function Field({ label, children, group = false }: { label: string; children: React.ReactNode; group?: boolean }) {
+  const caption = <span className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">{label}</span>;
+  return group ? (
+    <div role="group" aria-label={label}>
+      {caption}
+      {children}
+    </div>
+  ) : (
+    <FieldControl caption={caption}>
+      {children}
+    </FieldControl>
+  );
+}
+
+// Links the caption to the single input/select/textarea by id, so the label text stays just the caption.
+function FieldControl({ caption, children }: { caption: React.ReactNode; children: React.ReactNode }) {
+  const autoId = useId();
+  if (!isValidElement<{ id?: string }>(children)) {
+    return (
+      <label className="block">
+        {caption}
+        {children}
+      </label>
+    );
+  }
+  const id = children.props.id ?? autoId;
   return (
     <div>
-      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">{label}</label>
-      {children}
+      <label htmlFor={id} className="block">
+        {caption}
+      </label>
+      {cloneElement(children, { id })}
     </div>
   );
 }
@@ -126,7 +160,7 @@ export function ModuleShell<T extends string>({
   const groups = Array.from(new Set(tabs.map((t) => t.group ?? "Views")));
   return (
     <div className="flex h-full w-full overflow-hidden relative">
-      <aside className="w-72 bg-white/80 backdrop-blur-xl border-r border-slate-100 flex flex-col shrink-0 z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+      <aside className="hidden md:flex w-72 bg-white/80 backdrop-blur-xl border-r border-slate-100 flex-col shrink-0 z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
         <div className="h-20 flex items-center px-8 border-b border-slate-100">
           <h2 className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-2">
             <Icon size={24} className="text-indigo-600" /> {title}
@@ -163,11 +197,26 @@ export function ModuleShell<T extends string>({
       </aside>
 
       <main className="flex-1 bg-[#F4F7FE] flex flex-col min-w-0 overflow-y-auto">
-        <header className="h-24 flex items-center justify-between gap-4 px-10 shrink-0">
-          {onSearch ? <SearchBox value={search ?? ""} onChange={onSearch} placeholder={searchPlaceholder} /> : <div />}
+        {tabs.length > 1 && (
+          <div className="md:hidden flex gap-2 overflow-x-auto px-4 pt-4 hide-scrollbar" role="tablist">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={activeTab === t.id}
+                onClick={() => onTab(t.id)}
+                className={`shrink-0 px-4 py-2 rounded-full text-xs font-bold ${activeTab === t.id ? "bg-indigo-600 text-white" : "bg-white text-slate-600 border border-slate-200"}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <header className="flex flex-col md:flex-row md:h-24 md:items-center justify-between gap-3 md:gap-4 px-4 md:px-10 py-4 md:py-0 shrink-0">
+          {onSearch ? <SearchBox value={search ?? ""} onChange={onSearch} placeholder={searchPlaceholder} /> : <div className="hidden md:block" />}
           {action}
         </header>
-        <div className="px-10 pb-10">{children}</div>
+        <div className="px-4 md:px-10 pb-10">{children}</div>
       </main>
     </div>
   );
@@ -175,7 +224,7 @@ export function ModuleShell<T extends string>({
 
 export function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (s: string) => void; placeholder?: string }) {
   return (
-    <div className="relative w-96 max-w-full shadow-[0_4px_20px_rgba(0,0,0,0.03)] rounded-2xl">
+    <div className="relative w-full md:w-96 max-w-full shadow-[0_4px_20px_rgba(0,0,0,0.03)] rounded-2xl">
       <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
       <input
         type="text"
@@ -192,7 +241,7 @@ export function ActionButton({ onClick, icon: Icon, children }: { onClick: () =>
   return (
     <button
       onClick={onClick}
-      className="flex items-center gap-2 bg-linear-to-r from-blue-600 to-indigo-600 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-md hover:scale-105 transition-all shrink-0"
+      className="flex items-center justify-center gap-2 bg-linear-to-r from-blue-600 to-indigo-600 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-md hover:scale-105 transition-all shrink-0"
     >
       {Icon && <Icon size={18} />} {children}
     </button>
@@ -201,9 +250,9 @@ export function ActionButton({ onClick, icon: Icon, children }: { onClick: () =>
 
 export function PageHeading({ title, subtitle, children }: { title: string; subtitle?: string; children?: React.ReactNode }) {
   return (
-    <div className="flex justify-between items-end mb-6 mt-2 gap-4">
+    <div className="flex flex-col md:flex-row justify-between md:items-end mb-6 mt-2 gap-4">
       <div>
-        <h1 className="text-3xl font-black text-slate-800 mb-2">{title}</h1>
+        <h1 className="text-2xl md:text-3xl font-black text-slate-800 mb-2">{title}</h1>
         {subtitle && <p className="text-slate-500 font-medium">{subtitle}</p>}
       </div>
       {children}
@@ -213,10 +262,10 @@ export function PageHeading({ title, subtitle, children }: { title: string; subt
 
 export function Card({ title, action, children, className = "" }: { title?: string; action?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
-    <div className={`bg-white rounded-4xl p-8 shadow-sm border border-slate-100 ${className}`}>
+    <div className={`bg-white rounded-3xl md:rounded-4xl p-4 md:p-8 shadow-sm border border-slate-100 ${className}`}>
       {(title || action) && (
-        <div className="flex justify-between items-center mb-6 gap-4">
-          {title && <h3 className="text-xl font-bold text-slate-800">{title}</h3>}
+        <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
+          {title && <h3 className="text-lg md:text-xl font-bold text-slate-800">{title}</h3>}
           {action}
         </div>
       )}
@@ -290,8 +339,8 @@ export function Badge({ color = "slate", children }: { color?: keyof typeof BADG
 
 export function Table({ headers, children, empty, colSpan }: { headers: string[]; children: React.ReactNode; empty?: string | false; colSpan?: number }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-100">
-      <table className="w-full text-left text-sm">
+    <div className="overflow-x-auto rounded-2xl border border-slate-100">
+      <table className="w-full text-left text-sm min-w-max md:min-w-0">
         <thead className="bg-slate-50/50 text-slate-500 border-b border-slate-100">
           <tr>
             {headers.map((h, i) => (

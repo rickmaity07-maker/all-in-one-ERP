@@ -9,7 +9,10 @@ const db = new PGlite();
 await db.exec(`
   create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
   create schema auth; create schema storage;
-  create table auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}'::jsonb);
+  create table auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}'::jsonb, encrypted_password text, updated_at timestamptz);
+  create schema extensions;
+  create function extensions.gen_salt(text) returns text language sql as $$ select 'salt' $$;
+  create function extensions.crypt(text, text) returns text language sql as $$ select 'hash:' || $1 $$;
   create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
   create table storage.buckets (id text primary key, name text, public boolean);
   create table storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text, owner uuid default auth.uid());
@@ -55,6 +58,13 @@ for (const [name, id] of Object.entries(ids)) {
 const roles = Object.fromEntries((await db.query(`select full_name, role from public.profiles`)).rows.map((r) => [r.full_name, r.role]));
 check("first sign-up becomes owner", roles.owner === "owner", JSON.stringify(roles));
 check("later sign-ups become students", ["admin", "teacher", "alice", "bob", "eve"].every((n) => roles[n] === "student"));
+{
+  const p = (await db.query(`select full_name, active, pending from public.profiles`)).rows;
+  check("owner is active immediately", p.find((x) => x.full_name === "owner")?.active === true);
+  check("later sign-ups wait for approval (inactive + pending)", p.filter((x) => x.full_name !== "owner").every((x) => x.active === false && x.pending === true), JSON.stringify(p));
+}
+// Administrators approve everyone for the remaining tests.
+await db.exec(`update public.profiles set active = true, pending = false`);
 
 // Superuser setup (like the SQL editor)
 await db.exec(`
@@ -210,7 +220,7 @@ check("student cannot upload to faculty-lounge", !!r.error, r.error ?? "");
 {
   const teacher2 = "00000000-0000-0000-0000-000000000007";
   await db.query(`insert into auth.users (id, email, raw_user_meta_data) values ($1, 't2@test.local', '{"full_name":"teacher2"}')`, [teacher2]);
-  await db.exec(`update public.profiles set role = 'teacher' where id = '${teacher2}'`);
+  await db.exec(`update public.profiles set role = 'teacher', active = true, pending = false where id = '${teacher2}'`);
 
   r = await as(ids.teacher, `insert into public.classes (name, teacher_id) values ('Robotics', $1) returning id, teacher_id, teacher_name`, [teacher2]);
   const classId = r.rows[0]?.id;
@@ -267,6 +277,107 @@ check("student cannot upload to faculty-lounge", !!r.error, r.error ?? "");
   check("others cannot read someone's leave", (await count(ids.alice, `select * from public.leave_requests`)) === 0);
   r = await as(ids.admin, `update public.leave_requests set status = 'Approved' returning id`);
   check("admin approves leave", r.rows.length === 1, r.error ?? "");
+}
+
+
+// --- Privacy: email addresses ---
+r = await as(ids.alice, `select email from public.profiles`);
+check("students cannot read anyone's email address", !!r.error, r.error ?? JSON.stringify(r.rows));
+r = await as(ids.alice, `select id, full_name, role from public.profiles`);
+check("students can still see the name directory", !r.error && r.rows.length > 0, r.error ?? "");
+r = await as(ids.alice, `select * from public.admin_list_profiles()`);
+check("students cannot call the admin directory", !!r.error, r.error ?? "");
+r = await as(ids.admin, `select email from public.admin_list_profiles() where email is not null`);
+check("admins see email addresses", !r.error && r.rows.length > 0, r.error ?? "");
+
+// --- Account approval ---
+await db.exec(`update public.profiles set pending = true, active = false where id = '${ids.eve}'`);
+r = await as(ids.eve, `update public.profiles set pending = false, active = true where id = $1 returning id`, [ids.eve]);
+await db.exec(`update public.profiles set pending = false, active = true where id = '${ids.eve}'`);
+check("users cannot approve themselves", !!r.error, r.error ?? "");
+r = await as(ids.alice, `update public.profiles set email = 'hijack@x.com' where id = $1 returning id`, [ids.alice]);
+check("users cannot change their own email on the profile", !!r.error, r.error ?? "");
+
+// --- Password resets ---
+r = await as(null, `select public.request_password_reset('alice@test.local')`);
+check("anyone can request a password reset from the login screen", !r.error, r.error ?? "");
+await as(null, `select public.request_password_reset('alice@test.local')`);
+await as(null, `select public.request_password_reset('nobody@nowhere.com')`);
+const resetRows = (await db.query(`select email from public.password_reset_requests`)).rows;
+check("reset requests are rate-limited and ignore unknown emails", resetRows.length === 1, JSON.stringify(resetRows));
+check("students cannot see reset requests", (await count(ids.bob, `select * from public.password_reset_requests`)) === 0);
+check("admins see reset requests", (await count(ids.admin, `select * from public.password_reset_requests`)) === 1);
+r = await as(ids.bob, `select public.admin_reset_password($1, 'Hacked-123')`, [ids.alice]);
+check("students cannot reset passwords", !!r.error, r.error ?? "");
+r = await as(ids.admin, `select public.admin_reset_password($1, 'short')`, [ids.alice]);
+check("temporary password must be 8+ characters", !!r.error, r.error ?? "");
+r = await as(ids.admin, `select public.admin_reset_password($1, 'Temp-Pass-123')`, [ids.owner]);
+check("administration cannot reset the owner's password", !!r.error, r.error ?? "");
+r = await as(ids.admin, `select public.admin_reset_password($1, 'Temp-Pass-123')`, [ids.alice]);
+const pw = (await db.query(`select u.encrypted_password, p.must_change_password from auth.users u join public.profiles p on p.id = u.id where u.id = $1`, [ids.alice])).rows[0];
+check("admin resets a student's password", !r.error && pw.encrypted_password === "hash:Temp-Pass-123", r.error ?? JSON.stringify(pw));
+check("user must change the temporary password", pw.must_change_password === true);
+check("reset request marked resolved", (await db.query(`select 1 from public.password_reset_requests where resolved_at is null`)).rows.length === 0);
+r = await as(ids.alice, `update public.profiles set must_change_password = false where id = $1 returning id`, [ids.alice]);
+check("user clears the flag after changing password", !r.error && r.rows.length === 1, r.error ?? "");
+
+// --- Parents ---
+{
+  const parent = "00000000-0000-0000-0000-000000000009";
+  const teacher2 = "00000000-0000-0000-0000-000000000007";
+  await db.query(`insert into auth.users (id, email, raw_user_meta_data) values ($1, 'parent@test.local', '{"full_name":"Parent P"}')`, [parent]);
+  await db.exec(`update public.profiles set role = 'parent', active = true, pending = false where id = '${parent}'`);
+  r = await as(ids.alice, `insert into public.guardian_links (guardian_id, student_id) values ($1, $2)`, [parent, ids.alice]);
+  check("students cannot link themselves to parents", !!r.error, r.error ?? "");
+  r = await as(ids.admin, `insert into public.guardian_links (guardian_id, student_id, relationship) values ($1, $2, 'Mother') returning id`, [parent, ids.alice]);
+  check("admin links a parent to a child", !r.error, r.error ?? "");
+
+  const cls = (await db.query(`select id from public.classes where name = 'Robotics'`)).rows[0].id;
+  r = await as(parent, `select student_id from public.attendance`);
+  check("parent sees their child's attendance only", r.rows.length > 0 && r.rows.every((x) => x.student_id === ids.alice), JSON.stringify(r.rows));
+  r = await as(parent, `select student_id from public.grades`);
+  check("parent sees their child's grades only", r.rows.length > 0 && r.rows.every((x) => x.student_id === ids.alice), JSON.stringify(r.rows));
+  r = await as(parent, `select student_name from public.invoices`);
+  check("parent sees their child's invoices only", r.rows.length === 1 && r.rows[0].student_name === "alice", JSON.stringify(r.rows));
+  check("parent sees the child's class assessments", (await count(parent, `select * from public.assessments where class_id = '${cls}'`)) === 1);
+  r = await as(parent, `insert into public.leave_requests (start_date, end_date, student_id, reason) values (current_date, current_date, $1, 'flu') returning student_name, requester_role`, [ids.alice]);
+  check("parent files an absence note for their child", !r.error && r.rows[0]?.requester_role === "parent", r.error ?? JSON.stringify(r.rows));
+  r = await as(parent, `insert into public.leave_requests (start_date, end_date, student_id) values (current_date, current_date, $1)`, [ids.bob]);
+  check("parent cannot file notes for someone else's child", !!r.error, r.error ?? "");
+  r = await as(parent, `update public.grades set score = 50 returning id`);
+  check("parent cannot change grades", r.rows.length === 0, r.error ?? "");
+  check("parent cannot see admissions", (await count(parent, `select * from public.admissions`)) === 0);
+
+  // --- Notifications ---
+  const aid = (await db.query(`select id from public.assessments where class_id = '${cls}'`)).rows[0].id;
+  await as(ids.teacher, `update public.grades set score = 45 where assessment_id = $1 and student_id = $2`, [aid, ids.alice]);
+  await as(ids.teacher, `insert into public.attendance (class_id, student_id, student_name, session_date, status) values ($1, $2, 'alice', current_date - 1, 'Absent')`, [cls, ids.alice]);
+  r = await as(ids.alice, `select title from public.notifications`);
+  check("student is notified of a new grade", r.rows.some((n) => n.title.startsWith("New grade")), JSON.stringify(r.rows));
+  r = await as(parent, `select title from public.notifications`);
+  check("parent is notified of grades and absences", r.rows.some((n) => /New grade/.test(n.title)) && r.rows.some((n) => /absent/.test(n.title)), JSON.stringify(r.rows));
+  check("nobody can read someone else's notifications", (await count(ids.bob, `select * from public.notifications where user_id = '${ids.alice}'`)) === 0);
+  r = await as(ids.bob, `insert into public.notifications (user_id, title) values ($1, 'fake')`, [ids.alice]);
+  check("users cannot send fake notifications", !!r.error, r.error ?? "");
+  await as(ids.teacher, `insert into public.announcements (title, body, audience) values ('Staff only memo', 'x', 'staff')`);
+  check("staff-only notice does not notify students", (await count(ids.alice, `select * from public.notifications where title like '%Staff only memo%'`)) === 0);
+  check("staff-only notice notifies admins", (await count(ids.admin, `select * from public.notifications where title like '%Staff only memo%'`)) === 1);
+  await as(ids.bob, `insert into public.chat_messages (sender_id, message, channel) values ($1, 'hi alice', $2)`, [ids.bob, `dm:${ids.alice}:${ids.bob}`]);
+  check("direct message notifies the recipient", (await count(ids.alice, `select * from public.notifications where title like 'Message from%'`)) === 1);
+  r = await as(ids.alice, `update public.notifications set read_at = now() returning id`);
+  check("users can mark their notifications read", r.rows.length > 0, r.error ?? "");
+
+  // --- Room & teacher double-booking ---
+  r = await as(ids.teacher, `insert into public.classes (name, room, days, start_time, end_time, term) values ('Physics', 'A-101', 'Mon,Wed', '09:00', '10:30', 'Fall') returning id`);
+  check("teacher schedules a class in a room", !r.error, r.error ?? "");
+  r = await as(teacher2, `insert into public.classes (name, room, days, start_time, end_time, term) values ('Chemistry', 'a-101 ', 'Wed', '10:00', '11:00', 'Fall')`);
+  check("room double-booking is blocked", !!r.error && /A-101|a-101/i.test(r.error), r.error ?? "");
+  r = await as(ids.teacher, `insert into public.classes (name, room, days, start_time, end_time, term) values ('Maths', 'B-2', 'Mon', '10:00', '11:00', 'Fall')`);
+  check("teacher double-booking is blocked", !!r.error, r.error ?? "");
+  r = await as(teacher2, `insert into public.classes (name, room, days, start_time, end_time, term) values ('Chemistry', 'A-101', 'Wed', '10:30', '11:30', 'Fall') returning id`);
+  check("back-to-back classes in the same room are allowed", !r.error, r.error ?? "");
+  r = await as(teacher2, `insert into public.classes (name, room, days, start_time, end_time) values ('Bad times', 'C-3', 'Fri', '11:00', '10:00')`);
+  check("class that ends before it starts is rejected", !!r.error, r.error ?? "");
 }
 
 // --- Deactivated account ---

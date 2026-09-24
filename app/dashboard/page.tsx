@@ -4,12 +4,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   LayoutDashboard, ClipboardCheck, Calendar, Wrench, GraduationCap, Wallet, Users, Book,
-  ArrowRight, MessageSquare, Library, Megaphone, Pin, School, Clock,
+  ArrowRight, MessageSquare, Library, Megaphone, Pin, School, Clock, HeartHandshake, Plane,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useSession, isAdmin, isStaff } from "@/lib/session";
 import { Card, Empty, Loading, StatCard, Badge } from "@/components/ui";
-import { fmtDate, money, type Row } from "@/lib/utils";
+import { fmtDate, money, localDate, type Row } from "@/lib/utils";
 
 async function count(table: string, filter?: (q: ReturnType<typeof base>) => ReturnType<typeof base>) {
   let q = base(table);
@@ -31,7 +31,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     (async () => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localDate();
       const weekday = new Date().toLocaleDateString("en-US", { weekday: "short" });
       const [students, openTickets, materials, books, applicants, pendingInvoices, evts, exs, ann, cls, enr] = await Promise.all([
         count("registrar_records", (q) => q.eq("enrollment_status", "Active")),
@@ -70,12 +70,12 @@ export default function Dashboard() {
 
   return (
     <main className="flex-1 bg-[#F4F7FE] overflow-y-auto">
-      <div className="px-10 py-10 space-y-8">
-        <div className="bg-linear-to-br from-[#2A0845] to-[#6441A5] rounded-4xl p-10 text-white shadow-lg relative overflow-hidden">
+      <div className="px-4 md:px-10 py-6 md:py-10 space-y-8">
+        <div className="bg-linear-to-br from-[#2A0845] to-[#6441A5] rounded-3xl md:rounded-4xl p-6 md:p-10 text-white shadow-lg relative overflow-hidden">
           <div className="absolute right-0 top-0 w-72 h-72 bg-cyan-500/20 rounded-full blur-3xl"></div>
           <div className="relative z-10">
             <p className="text-white/70 font-semibold flex items-center gap-2 mb-2"><LayoutDashboard size={18} /> Dashboard</p>
-            <h1 className="text-4xl font-black mb-2">{greeting}, {profile?.full_name?.split(" ")[0]}.</h1>
+            <h1 className="text-2xl md:text-4xl font-black mb-2">{greeting}, {profile?.full_name?.split(" ")[0]}.</h1>
             <p className="text-white/70 font-medium">
               Signed in as <span className="uppercase font-black text-cyan-300">{role}</span>. Here is what is happening across campus today.
             </p>
@@ -86,19 +86,19 @@ export default function Dashboard() {
           <Loading label="Loading campus overview..." />
         ) : (
           <>
-            <div className="grid grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {isStaff(role) && <StatCard label="Active Students" value={stats.students} icon={GraduationCap} color="indigo" />}
-              <StatCard label="Open Tickets" value={stats.openTickets} icon={Wrench} color="orange" />
-              <StatCard label="Course Resources" value={stats.materials} icon={Book} color="blue" />
-              <StatCard label="Library Titles" value={stats.books} icon={Library} color="purple" />
+              {role !== "parent" && <StatCard label="Open Tickets" value={stats.openTickets} icon={Wrench} color="orange" />}
+              {role !== "parent" && <StatCard label="Course Resources" value={stats.materials} icon={Book} color="blue" />}
+              {role !== "parent" && <StatCard label="Library Titles" value={stats.books} icon={Library} color="purple" />}
               {isAdmin(role) && <StatCard label="Open Applications" value={stats.applicants} icon={Users} color="emerald" />}
-              {(isAdmin(role) || role === "student") && (
-                <StatCard label={role === "student" ? "My Balance Due" : "Outstanding Tuition"} value={money(stats.outstanding)} icon={Wallet} color="pink" />
+              {(isAdmin(role) || role === "student" || role === "parent") && (
+                <StatCard label={role === "student" ? "My Balance Due" : role === "parent" ? "Family Balance Due" : "Outstanding Tuition"} value={money(stats.outstanding)} icon={Wallet} color="pink" />
               )}
             </div>
 
             {(notices.length > 0 || todayClasses.length > 0) && (
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card title="Notice Board" action={<Link href="/announcements" className="text-sm font-bold text-indigo-600 flex items-center gap-1">All notices <ArrowRight size={14} /></Link>}>
                   {notices.length === 0 ? (
                     <Empty>No announcements.</Empty>
@@ -136,7 +136,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <Card title="Upcoming Events" action={<Link href="/calendar" className="text-sm font-bold text-indigo-600 flex items-center gap-1">Calendar <ArrowRight size={14} /></Link>}>
                 {events.length === 0 ? (
                   <Empty>Nothing scheduled.</Empty>
@@ -180,13 +180,21 @@ export default function Dashboard() {
               </Card>
             </div>
 
-            <div className="grid grid-cols-4 gap-4">
-              {[
-                { href: "/chat", label: "Open Messages", icon: MessageSquare },
-                { href: "/e-learning", label: "Course Content", icon: Book },
-                { href: "/housing", label: "Report an Issue", icon: Wrench },
-                { href: "/library", label: "Browse Library", icon: Library },
-              ].map((l) => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+              {(role === "parent"
+                ? [
+                    { href: "/family", label: "My Children", icon: HeartHandshake },
+                    { href: "/leave", label: "Report an Absence", icon: Plane },
+                    { href: "/chat", label: "Message a Teacher", icon: MessageSquare },
+                    { href: "/finance", label: "Invoices", icon: Wallet },
+                  ]
+                : [
+                    { href: "/chat", label: "Open Messages", icon: MessageSquare },
+                    { href: "/e-learning", label: "Course Content", icon: Book },
+                    { href: "/housing", label: "Report an Issue", icon: Wrench },
+                    { href: "/library", label: "Browse Library", icon: Library },
+                  ]
+              ).map((l) => (
                 <Link key={l.href} href={l.href} className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm flex items-center gap-3 font-bold text-slate-700 hover:border-indigo-200 hover:text-indigo-700 transition-all">
                   <l.icon size={20} /> {l.label}
                 </Link>

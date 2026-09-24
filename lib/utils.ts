@@ -6,7 +6,12 @@ export type Row = Record<string, any>;
 export const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export const money = (n: number | string | null | undefined) =>
-  `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  `$${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// Calendar date (YYYY-MM-DD) in the user's own time zone. toISOString() would give the UTC date,
+// which is "yesterday" for a few hours after midnight in time zones ahead of UTC (e.g. Germany).
+export const localDate = (d: Date = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 export const fmtDate = (d?: string | null) => (d ? new Date(d).toLocaleDateString() : "—");
 
@@ -62,6 +67,7 @@ export function printDocument(title: string, bodyHtml: string) {
     .muted{color:#64748b;font-size:12px} table{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}
     th,td{text-align:left;padding:8px;border-bottom:1px solid #e2e8f0} th{background:#f8fafc}
     .right{text-align:right} .total{font-size:18px;font-weight:700}
+    .page{page-break-after:always;break-after:page} .page:last-child{page-break-after:auto;break-after:auto}
     .brand{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #6441A5;padding-bottom:16px;margin-bottom:24px}
   </style></head><body>${bodyHtml}</body></html>`);
   doc.close();

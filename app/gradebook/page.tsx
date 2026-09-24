@@ -80,7 +80,7 @@ export default function Gradebook() {
     grades.setRows((prev) => [...prev.filter((g) => !(g.assessment_id === assessment.id && g.student_id === studentId)), ...(data ?? [])]);
   };
 
-  const printReportCard = (student: Row) => {
+  const reportCardHtml = (student: Row) => {
     const avg = weighted(classAssessments, scoreOf(student.student_id));
     const rows = classAssessments
       .map((a) => {
@@ -88,8 +88,7 @@ export default function Gradebook() {
         return `<tr><td>${escapeHtml(a.title)}</td><td>${escapeHtml(a.category)}</td><td class="right">${s ?? "—"} / ${a.max_points}</td><td class="right">${a.weight}</td></tr>`;
       })
       .join("");
-    printDocument(
-      `Report card - ${student.student_name}`,
+    return (
       `<div class="brand"><div><h1>Report Card</h1><div class="muted">${escapeHtml(cls?.name)} ${cls?.code ? "(" + escapeHtml(cls.code) + ")" : ""} • ${escapeHtml(cls?.term ?? "")}</div></div>
         <div class="right muted">Teacher: ${escapeHtml(cls?.teacher_name ?? "")}<br/>Issued ${new Date().toLocaleDateString()}</div></div>
        <p><b>${escapeHtml(student.student_name)}</b></p>
@@ -98,12 +97,21 @@ export default function Gradebook() {
     );
   };
 
+  const printReportCard = (student: Row) => printDocument(`Report card - ${student.student_name}`, reportCardHtml(student));
+
+  // Whole class in one document, one student per page.
+  const printAllReportCards = () =>
+    printDocument(
+      `Report cards - ${cls?.name ?? "class"}`,
+      roster.map((st) => `<section class="page">${reportCardHtml(st)}</section>`).join("")
+    );
+
   if (classes.loading || enrollments.loading || assessments.loading || grades.loading) {
     return <ModuleShell title="Gradebook" icon={BookMarked} tabs={[]} activeTab="x" onTab={() => {}}><Loading /></ModuleShell>;
   }
 
   const classPicker = (
-    <select value={activeClass} onChange={(e) => setClassId(e.target.value)} className="text-sm font-semibold bg-white border border-slate-200 rounded-xl px-3 py-2.5 outline-none min-w-56">
+    <select value={activeClass} onChange={(e) => setClassId(e.target.value)} className="text-sm font-semibold bg-white border border-slate-200 rounded-xl px-3 py-2.5 outline-none w-full md:w-auto md:min-w-56">
       {myClasses.map((c) => <option key={c.id} value={c.id}>{c.name}{c.code ? ` (${c.code})` : ""}</option>)}
     </select>
   );
@@ -125,7 +133,7 @@ export default function Gradebook() {
                   {list.length === 0 ? (
                     <p className="text-sm text-slate-400">No assessments yet.</p>
                   ) : (
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       {list.map((a) => {
                         const s = scoreOf(profile!.id)(a.id);
                         return (
@@ -161,7 +169,7 @@ export default function Gradebook() {
         <Modal title="New Assessment" icon={BookMarked} onClose={() => setModalOpen(false)}>
           <form onSubmit={addAssessment} className="space-y-4">
             <Field label="Title"><input required className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Quiz 3" /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Category">
                 <select className={inputClass} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
                   {["Assignment", "Quiz", "Midterm", "Final", "Project", "Participation"].map((c) => <option key={c}>{c}</option>)}
@@ -169,7 +177,7 @@ export default function Gradebook() {
               </Field>
               <Field label="Due Date"><input type="date" className={inputClass} value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></Field>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Max Points"><input type="number" min="1" step="0.5" required className={inputClass} value={form.max_points} onChange={(e) => setForm({ ...form, max_points: e.target.value })} /></Field>
               <Field label="Weight"><input type="number" min="0" step="0.1" required className={inputClass} value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} /></Field>
             </div>
@@ -184,7 +192,7 @@ export default function Gradebook() {
       ) : (
         <>
           <PageHeading title={cls?.name ?? "Gradebook"} subtitle="Type a score and press Tab — it saves automatically. Blank means not graded yet.">
-            <div className="flex gap-2 items-center">
+            <div className="flex flex-wrap gap-2 items-center">
               {classPicker}
               <button
                 onClick={() =>
@@ -199,6 +207,13 @@ export default function Gradebook() {
                 className="flex items-center gap-2 text-blue-600 font-bold text-sm bg-white border border-slate-200 hover:bg-blue-50 px-4 py-2.5 rounded-xl"
               >
                 <Download size={16} /> CSV
+              </button>
+              <button
+                onClick={printAllReportCards}
+                disabled={!roster.length || !classAssessments.length}
+                className="flex items-center gap-2 text-indigo-600 font-bold text-sm bg-white border border-slate-200 hover:bg-indigo-50 px-4 py-2.5 rounded-xl disabled:opacity-40"
+              >
+                <Printer size={16} /> All report cards
               </button>
             </div>
           </PageHeading>

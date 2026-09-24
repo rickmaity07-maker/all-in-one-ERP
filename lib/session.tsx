@@ -1,11 +1,11 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 
-export type Role = "owner" | "administration" | "teacher" | "student";
+export type Role = "owner" | "administration" | "teacher" | "student" | "parent";
 
 export type Profile = {
   id: string;
@@ -13,6 +13,8 @@ export type Profile = {
   role: Role;
   email?: string | null;
   active?: boolean | null;
+  pending?: boolean | null;
+  must_change_password?: boolean | null;
 };
 
 type SessionState = {
@@ -29,20 +31,32 @@ const SessionContext = createContext<SessionState | null>(null);
 export const ADMIN_ROLES: Role[] = ["owner", "administration"];
 export const STAFF_ROLES: Role[] = ["owner", "administration", "teacher"];
 
+// Email is not readable from profiles (privacy); it comes from the signed-in auth user instead.
+const PROFILE_COLUMNS = "id, full_name, role, active, pending, must_change_password";
+
+export const LOGIN_NOTICE_KEY = "erp_login_notice";
+
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  // Id of the user whose profile we want. Loads that finish for anyone else (e.g. a slow request
+  // from before a log-out/log-in) are ignored so they can't overwrite the current profile.
+  const wanted = useRef<string | null>(null);
 
   const loadProfile = useCallback(async (u: User | null) => {
+    wanted.current = u?.id ?? null;
     if (!u) {
       setProfile(null);
       return;
     }
-    const { data } = await supabase.from("profiles").select("*").eq("id", u.id).maybeSingle();
-    // The database trigger creates the profile on sign-up; until it exists treat the user as a student.
+    const { data } = await supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", u.id).maybeSingle();
+    if (wanted.current !== u.id) return;
+    // The database trigger creates the profile on sign-up; until it exists treat the account as pending.
     setProfile(
-      (data as Profile) ?? { id: u.id, full_name: u.email?.split("@")[0] ?? "User", role: "student", email: u.email }
+      data
+        ? ({ ...(data as Profile), email: u.email } as Profile)
+        : { id: u.id, full_name: u.email?.split("@")[0] ?? "User", role: "student", email: u.email, active: false, pending: true }
     );
   }, []);
 
@@ -76,6 +90,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [loadProfile]);
 
   const signOut = useCallback(async () => {
+    wanted.current = null;
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
@@ -102,23 +117,37 @@ export function isStaff(role: Role) {
   return STAFF_ROLES.includes(role);
 }
 
-// Sends signed-out visitors back to the login screen and deactivated accounts out of the app.
+export function setLoginNotice(message: string) {
+  try {
+    sessionStorage.setItem(LOGIN_NOTICE_KEY, message);
+  } catch {}
+}
+
+// Sends signed-out visitors to the login screen, keeps pending/deactivated accounts out,
+// and forces a password change after an administrator reset.
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, profile, loading, signOut } = useSession();
   const pathname = usePathname();
   const router = useRouter();
   const isLogin = pathname === "/";
+  const blocked = !!profile && profile.active === false;
+  const mustChange = !!profile?.must_change_password && profile.active !== false;
 
   useEffect(() => {
     if (loading || isLogin) return;
     if (!user) router.replace("/");
-    else if (profile && profile.active === false) {
-      try { sessionStorage.setItem("erp_login_notice", "This account has been deactivated. Contact an administrator."); } catch {}
+    else if (blocked) {
+      setLoginNotice(
+        profile?.pending
+          ? "Your account is waiting for an administrator to approve it. You'll be able to sign in once it's approved."
+          : "This account has been deactivated. Contact an administrator."
+      );
       signOut().then(() => router.replace("/"));
-    }
-  }, [loading, user, profile, isLogin, router, signOut]);
+    } else if (mustChange && pathname !== "/settings") router.replace("/settings");
+  }, [loading, user, blocked, mustChange, isLogin, pathname, profile?.pending, router, signOut]);
 
   // Wait for the profile too, so pages never render with a stale/default role.
-  if (!isLogin && (loading || !user || !profile || profile.id !== user.id)) return null;
+  if (!isLogin && (loading || !user || !profile || profile.id !== user.id || blocked)) return null;
+  if (!isLogin && mustChange && pathname !== "/settings") return null;
   return <>{children}</>;
 }

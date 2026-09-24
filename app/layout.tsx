@@ -25,7 +25,7 @@ export default function RootLayout({
           {/* CUSTOM NATIVE TITLEBAR */}
           <div
             data-tauri-drag-region
-            className="h-10 bg-linear-to-r from-[#2A0845] to-[#6441A5] border-b border-white/10 flex items-center justify-center px-4 text-xs font-semibold text-white/70 select-none shrink-0"
+            className="h-10 bg-linear-to-r from-[#2A0845] to-[#6441A5] border-b border-white/10 hidden md:flex items-center justify-center px-4 text-xs font-semibold text-white/70 select-none shrink-0"
           >
             <span className="pointer-events-none">All-In-One ERP Workspace</span>
           </div>
@@ -33,10 +33,10 @@ export default function RootLayout({
           <UpdateBanner />
 
           {/* MAIN APP CONTAINER */}
-          <div className="flex-1 flex overflow-hidden">
+          <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
             <AuthGuard>
               <GlobalSidebar />
-              <div className="flex-1 flex overflow-hidden relative">{children}</div>
+              <div className="flex-1 flex overflow-hidden relative min-h-0">{children}</div>
             </AuthGuard>
           </div>
 

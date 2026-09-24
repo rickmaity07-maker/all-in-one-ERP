@@ -138,7 +138,7 @@ export default function AdmissionsPortal() {
             <Field label="Full Name">
               <input required className={inputClass} value={form.applicant_name} onChange={(e) => setForm({ ...form, applicant_name: e.target.value })} placeholder="e.g. Lukas Weber" />
             </Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Email"><input type="email" className={inputClass} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
               <Field label="Phone"><input className={inputClass} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
             </div>
@@ -156,7 +156,7 @@ export default function AdmissionsPortal() {
       {selected && (
         <Modal title={selected.applicant_name} icon={Users} onClose={() => setSelectedId(null)} wide>
           <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div className="p-4 bg-slate-50 rounded-2xl"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Program</p><p className="font-bold text-slate-800">{selected.program}</p></div>
               <div className="p-4 bg-slate-50 rounded-2xl"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Applied</p><p className="font-bold text-slate-800">{fmtDate(selected.created_at)}</p></div>
               <div className="p-4 bg-slate-50 rounded-2xl flex items-center gap-2"><Mail size={14} className="text-slate-400" /> {selected.email || "—"}</div>
@@ -215,7 +215,7 @@ export default function AdmissionsPortal() {
               <Download size={16} /> Export CSV
             </button>
           </PageHeading>
-          <div className="grid grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {columns.map((c) => (
               <div key={c.status} className="bg-slate-100/50 rounded-4xl p-6 border border-slate-200">
                 <h3 className="font-bold text-slate-700 mb-4 flex items-center justify-between">

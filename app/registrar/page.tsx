@@ -195,12 +195,12 @@ export default function RegistrarPortal() {
                 {accounts.map((a) => <option key={a.id} value={a.id}>{a.full_name}</option>)}
               </select>
             </Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Student Number"><input className={inputClass} value={form.student_number} onChange={(e) => setForm({ ...form, student_number: e.target.value })} /></Field>
               <Field label="Current GPA"><input type="number" step="0.01" min="0" max="4" className={inputClass} value={form.gpa} onChange={(e) => setForm({ ...form, gpa: e.target.value })} /></Field>
             </div>
             <Field label="Major / Program"><input required className={inputClass} value={form.major} onChange={(e) => setForm({ ...form, major: e.target.value })} /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Credits Earned"><input type="number" min="0" className={inputClass} value={form.credits_earned} onChange={(e) => setForm({ ...form, credits_earned: e.target.value })} /></Field>
               <Field label="Credits Required"><input type="number" min="1" className={inputClass} value={form.credits_required} onChange={(e) => setForm({ ...form, credits_required: e.target.value })} /></Field>
             </div>
@@ -211,9 +211,9 @@ export default function RegistrarPortal() {
 
       {coursesFor && (
         <Modal title={`Courses — ${coursesFor.student_name}`} icon={BookOpen} onClose={() => setCoursesFor(null)} wide>
-          <form onSubmit={handleAddCourse} className="grid grid-cols-6 gap-2 mb-6 items-end">
+          <form onSubmit={handleAddCourse} className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-6 items-end">
             <input placeholder="Code" className={`${inputClass} col-span-1`} value={course.course_code} onChange={(e) => setCourse({ ...course, course_code: e.target.value })} />
-            <input placeholder="Course name" required className={`${inputClass} col-span-2`} value={course.course_name} onChange={(e) => setCourse({ ...course, course_name: e.target.value })} />
+            <input placeholder="Course name" required className={`${inputClass} md:col-span-2`} value={course.course_name} onChange={(e) => setCourse({ ...course, course_name: e.target.value })} />
             <input placeholder="Term" className={inputClass} value={course.term} onChange={(e) => setCourse({ ...course, term: e.target.value })} />
             <input placeholder="Credits" type="number" className={inputClass} value={course.credits} onChange={(e) => setCourse({ ...course, credits: e.target.value })} />
             <button type="submit" className="py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700">Add</button>
@@ -273,7 +273,7 @@ export default function RegistrarPortal() {
               <div className="bg-linear-to-br from-[#2A0845] to-[#6441A5] rounded-4xl p-8 text-white shadow-lg relative overflow-hidden flex justify-between items-center">
                 <div className="absolute right-0 top-0 w-64 h-64 bg-cyan-500/20 rounded-full blur-3xl"></div>
                 <div className="relative z-10">
-                  <h1 className="text-3xl font-black mb-2">{myRecord.student_name}</h1>
+                  <h1 className="text-2xl md:text-3xl font-black mb-2">{myRecord.student_name}</h1>
                   <p className="text-white/80 font-medium flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-400"></span> {myRecord.major} • {myRecord.enrollment_status}
                     {myRecord.student_number && ` • ID ${myRecord.student_number}`}
@@ -310,7 +310,7 @@ export default function RegistrarPortal() {
         ) : (
           <Card title="Official Transcripts">
             <p className="text-slate-500 text-sm -mt-4 mb-8">Request certified copies of your academic record.</p>
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="border border-slate-200 rounded-3xl p-6 hover:border-indigo-300 hover:bg-indigo-50/30 transition-all">
                 <div className="w-14 h-14 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mb-4"><Download size={24} /></div>
                 <h4 className="text-lg font-bold text-slate-800 mb-2">Digital Transcript (PDF)</h4>
@@ -390,7 +390,7 @@ export default function RegistrarPortal() {
       ) : activeTab === "secondary" ? (
         <>
           <PageHeading title="Academic Probation & Intervention" subtitle="Review students falling below academic standing requirements." />
-          <div className="grid grid-cols-3 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <StatCard label="At Risk" value={`${probation.length} Students`} icon={ShieldAlert} color="orange" />
             <StatCard label="GPA below 2.0" value={`${visible.filter((r) => r.gpa != null && Number(r.gpa) < 2).length} Students`} icon={AlertTriangle} color="red" />
           </div>

@@ -156,7 +156,7 @@ export default function ChatPortal() {
       )}
 
       {/* CONTEXTUAL SIDEBAR - Channels and DMs */}
-      <aside className="w-72 bg-white/80 backdrop-blur-xl border-r border-slate-100 flex flex-col shrink-0 z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+      <aside className="hidden md:flex w-72 bg-white/80 backdrop-blur-xl border-r border-slate-100 flex-col shrink-0 z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
         <div className="h-20 flex items-center justify-between px-6 border-b border-slate-100">
           <h2 className="text-xl font-bold text-slate-800 tracking-tight">Messages</h2>
           {isStaff(role) && (
@@ -223,8 +223,21 @@ export default function ChatPortal() {
 
       {/* MAIN CHAT AREA */}
       <main className="flex-1 bg-[#F4F7FE] flex flex-col min-w-0 relative">
-        <header className="h-20 bg-white/60 backdrop-blur-md border-b border-slate-200/50 flex items-center justify-between px-8 shrink-0">
-          <div>
+        <header className="min-h-20 bg-white/60 backdrop-blur-md border-b border-slate-200/50 flex items-center justify-between gap-3 px-4 md:px-8 py-3 shrink-0">
+          <select
+            aria-label="Conversation"
+            value={activeChannel}
+            onChange={(e) => openChannel(e.target.value)}
+            className="md:hidden w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold outline-none"
+          >
+            <optgroup label="Channels">
+              {visibleChannels.map((c) => <option key={c.id} value={c.name}>#{c.name}</option>)}
+            </optgroup>
+            <optgroup label="Direct messages">
+              {visiblePeople.map((p) => <option key={p.id} value={dmChannel(me.id, p.id)}>{p.full_name}</option>)}
+            </optgroup>
+          </select>
+          <div className="hidden md:block">
             <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
               {!isDM ? <Hash size={20} className="text-blue-500" /> : <div className="w-6 h-6 rounded-full bg-slate-800 text-white flex items-center justify-center text-[10px]">{initials(title)}</div>}
               {title}
@@ -234,7 +247,7 @@ export default function ChatPortal() {
           <span className="text-xs font-bold text-emerald-600 flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Live</span>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-8 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
           <div className="flex items-center justify-center">
             <span className="bg-white border border-slate-200 text-slate-400 text-xs font-bold px-4 py-1 rounded-full shadow-sm">
               {isDM ? `Conversation with ${title}` : `Welcome to the #${activeChannel} channel!`}
@@ -279,9 +292,9 @@ export default function ChatPortal() {
           <div ref={messagesEndRef} />
         </div>
 
-        <form onSubmit={handleSendMessage} className="p-6 bg-white/60 backdrop-blur-md border-t border-slate-200/50 shrink-0 relative">
+        <form onSubmit={handleSendMessage} className="p-3 md:p-6 bg-white/60 backdrop-blur-md border-t border-slate-200/50 shrink-0 relative">
           {showEmoji && (
-            <div className="absolute bottom-24 right-8 bg-white rounded-2xl shadow-xl border border-slate-100 p-3 grid grid-cols-6 gap-1 z-20">
+            <div className="absolute bottom-24 right-8 bg-white rounded-2xl shadow-xl border border-slate-100 p-3 grid grid-cols-2 md:grid-cols-6 gap-1 z-20">
               {EMOJIS.map((em) => (
                 <button key={em} type="button" onClick={() => setNewMessage((m) => m + em)} className="text-xl p-1.5 hover:bg-slate-100 rounded-lg">{em}</button>
               ))}

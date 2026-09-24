@@ -95,7 +95,7 @@ export default function HousingPortal() {
         <Modal title="Add Room" icon={BedDouble} onClose={close}>
           <form onSubmit={submit(() => rooms.insert({ ...room, capacity: parseInt(room.capacity) || 1 }, "Room added."))} className="space-y-4">
             <Field label="Building"><input required className={inputClass} value={room.building} onChange={(e) => setRoom({ ...room, building: e.target.value })} placeholder="e.g. Block B" /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Room Number"><input required className={inputClass} value={room.room_number} onChange={(e) => setRoom({ ...room, room_number: e.target.value })} /></Field>
               <Field label="Beds"><input type="number" min="1" required className={inputClass} value={room.capacity} onChange={(e) => setRoom({ ...room, capacity: e.target.value })} /></Field>
             </div>
@@ -140,7 +140,7 @@ export default function HousingPortal() {
               </select>
             </Field>
             <Field label="Holder Name"><input required className={inputClass} value={meal.holder_name} onChange={(e) => setMeal({ ...meal, holder_name: e.target.value })} /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Plan">
                 <select className={inputClass} value={meal.plan} onChange={(e) => setMeal({ ...meal, plan: e.target.value })}>
                   {["Standard", "Gold", "Platinum"].map((p) => <option key={p}>{p}</option>)}
@@ -226,7 +226,7 @@ export default function HousingPortal() {
         ) : !myMeal ? (
           <Empty>You don&apos;t have a meal plan yet. Visit the housing office to open one.</Empty>
         ) : (
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-linear-to-br from-orange-400 to-pink-500 rounded-4xl p-8 text-white shadow-lg relative overflow-hidden flex flex-col justify-between aspect-video">
               <div className="absolute -right-6 -top-6 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
               <div>
@@ -242,7 +242,7 @@ export default function HousingPortal() {
         )
       ) : staff ? (
         <>
-          <div className="grid grid-cols-3 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <StatCard label="Rooms" value={rooms.rows.length} icon={Building} color="indigo" />
             <StatCard label="Beds Occupied" value={`${usedBeds}/${totalBeds}`} icon={BedDouble} color="blue" />
             <StatCard label="Occupancy" value={`${occupancy}%`} icon={CheckCircle2} color="emerald" />
@@ -259,7 +259,7 @@ export default function HousingPortal() {
             {rooms.rows.length === 0 ? (
               <Empty>No rooms yet. Add your buildings and rooms to start assigning residents.</Empty>
             ) : (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {rooms.rows.filter((r) => matches(search, r.building, r.room_number, ...occupants(r.id).map((o) => o.resident_name))).map((r) => (
                   <div key={r.id} className="p-5 rounded-2xl border border-slate-100 bg-slate-50/50">
                     <div className="flex justify-between items-start mb-3">
@@ -288,8 +288,8 @@ export default function HousingPortal() {
       ) : !myAssignment ? (
         <Empty>You have no residential assignment on record.</Empty>
       ) : (
-        <div className="grid grid-cols-3 gap-6">
-          <Card className="col-span-2">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <Card className="md:col-span-2">
             <div className="flex items-start justify-between mb-8">
               <div>
                 <h3 className="text-xl font-bold text-slate-800 mb-1">Residential Assignment</h3>
@@ -297,7 +297,7 @@ export default function HousingPortal() {
               </div>
               <Badge color="green">{myAssignment.status}</Badge>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="p-5 bg-slate-50 rounded-2xl border border-slate-100">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Building & Room</p>
                 <p className="text-lg font-black text-slate-800">{myRoom?.building}, Room {myRoom?.room_number}</p>

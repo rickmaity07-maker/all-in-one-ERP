@@ -21,11 +21,11 @@ test.describe("Login & route protection", () => {
 
   test("password shorter than 8 characters is rejected by the form", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: /No account yet/ }).click();
+    await page.getByRole("button", { name: /Request access/ }).click();
     await page.getByPlaceholder("Full Name").fill("Short Pw");
     await page.getByPlaceholder("Email Address").fill("short.pw.e2e@gmail.com");
     await page.getByPlaceholder("Password").fill("abc");
-    await page.getByRole("button", { name: /Create Account/ }).click();
+    await page.getByRole("button", { name: "Request Access", exact: true }).click();
     const valid = await page.getByPlaceholder("Password").evaluate((el: HTMLInputElement) => el.checkValidity());
     expect(valid).toBe(false);
   });

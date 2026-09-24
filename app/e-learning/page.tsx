@@ -9,7 +9,7 @@ import { supabase } from "@/lib/supabase";
 import { useSession, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Table, Loading, Empty, Badge, inputClass, toast, confirmAction } from "@/components/ui";
-import { errorMessage, fmtDate, fmtDateTime, matches, openStoredFile, removeStoredFile, uploadFile, type Row } from "@/lib/utils";
+import { errorMessage, fmtDate, fmtDateTime, matches, openExternal, openStoredFile, removeStoredFile, uploadFile, localDate, type Row } from "@/lib/utils";
 
 type TabId = "lectures" | "materials" | "assignments" | "roster";
 const BUCKET = "course-files";
@@ -27,7 +27,7 @@ export default function ELearningPortal() {
 
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ title: "", file_type: "Video", description: "", due_date: "", size_mb: "" });
+  const [form, setForm] = useState({ title: "", file_type: "Video", description: "", due_date: "", size_mb: "", source: "file", external_url: "" });
   const [file, setFile] = useState<File | null>(null);
 
   const [viewSubsFor, setViewSubsFor] = useState<Row | null>(null);
@@ -40,16 +40,19 @@ export default function ELearningPortal() {
     e.preventDefault();
     setBusy(true);
     try {
-      const file_path = file ? await uploadFile(BUCKET, file, form.file_type.toLowerCase()) : null;
-      const size_mb = file ? Math.round((file.size / 1024 / 1024) * 10) / 10 : parseFloat(form.size_mb) || 0;
+      const asLink = form.source === "link";
+      const external_url = asLink ? form.external_url.trim() : null;
+      if (asLink && !/^https:\/\/\S+$/i.test(external_url ?? "")) throw new Error("Enter a full link starting with https://");
+      const file_path = !asLink && file ? await uploadFile(BUCKET, file, form.file_type.toLowerCase()) : null;
+      const size_mb = !asLink && file ? Math.round((file.size / 1024 / 1024) * 10) / 10 : 0;
       const icon_color = form.file_type === "Video" ? "purple" : form.file_type === "Assignment" ? "orange" : "blue";
       const row = await materials.insert(
-        { title: form.title, file_type: form.file_type, description: form.description || null, due_date: form.due_date || null, size_mb, icon_color, file_path },
+        { title: form.title, file_type: form.file_type, description: form.description || null, due_date: form.due_date || null, size_mb, icon_color, file_path, external_url },
         "Resource published."
       );
       if (row) {
         setIsUploadOpen(false);
-        setForm({ title: "", file_type: "Video", description: "", due_date: "", size_mb: "" });
+        setForm({ title: "", file_type: "Video", description: "", due_date: "", size_mb: "", source: "file", external_url: "" });
         setFile(null);
         setActiveTab(row.file_type === "Assignment" ? "assignments" : row.file_type === "Video" ? "lectures" : "materials");
       }
@@ -71,6 +74,7 @@ export default function ELearningPortal() {
   };
 
   const openMaterial = (m: Row) => {
+    if (m.external_url) return openExternal(m.external_url);
     if (!m.file_path) return toast("No file is attached to this resource.", "error");
     openStoredFile(BUCKET, m.file_path).catch((e) => toast(errorMessage(e), "error"));
   };
@@ -146,9 +150,34 @@ export default function ELearningPortal() {
             {form.file_type === "Assignment" && (
               <Field label="Due Date"><input type="date" className={inputClass} value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></Field>
             )}
-            <Field label={form.file_type === "Assignment" ? "Brief / Instructions File (optional)" : "File"}>
+            {form.file_type !== "Assignment" && (
+              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Source">
+                {[
+                  { id: "file", label: "Upload a file" },
+                  { id: "link", label: "Link (YouTube, OneDrive…)" },
+                ].map((o) => (
+                  <button
+                    type="button"
+                    key={o.id}
+                    role="radio"
+                    aria-checked={form.source === o.id}
+                    onClick={() => setForm({ ...form, source: o.id })}
+                    className={`py-2.5 rounded-xl text-xs font-bold ${form.source === o.id ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"}`}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {form.source === "link" && form.file_type !== "Assignment" ? (
+              <Field key="link" label="Video / Document Link">
+                <input type="url" required className={inputClass} value={form.external_url} onChange={(e) => setForm({ ...form, external_url: e.target.value })} placeholder="https://www.youtube.com/watch?v=…" />
+              </Field>
+            ) : (
+            <Field key="file" label={form.file_type === "Assignment" ? "Brief / Instructions File (optional)" : "File"}>
               <input type="file" className={inputClass} onChange={(e) => setFile(e.target.files?.[0] ?? null)} required={form.file_type !== "Assignment"} />
             </Field>
+            )}
             <SubmitButton busy={busy}>Publish</SubmitButton>
           </form>
         </Modal>
@@ -201,8 +230,8 @@ export default function ELearningPortal() {
       {materials.loading ? (
         <Loading label="Syncing with database..." />
       ) : activeTab === "lectures" ? (
-        <div className="grid grid-cols-3 gap-6">
-          <div className={`${staff ? "col-span-2" : "col-span-3"} bg-linear-to-br from-indigo-900 to-[#2A0845] rounded-4xl p-10 flex flex-col justify-between aspect-video relative overflow-hidden shadow-xl`}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className={`${staff ? "md:col-span-2" : "md:col-span-3"} bg-linear-to-br from-indigo-900 to-[#2A0845] rounded-4xl p-10 flex flex-col justify-between aspect-video relative overflow-hidden shadow-xl`}>
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
               <button
                 onClick={() => (featured ? openMaterial(featured) : toast("No lectures uploaded yet.", "error"))}
@@ -214,7 +243,7 @@ export default function ELearningPortal() {
             </div>
             <div className="mt-auto relative z-10">
               <span className="bg-pink-500 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-lg mb-3 inline-block">Latest Lecture</span>
-              <h2 className="text-3xl font-black text-white">{featured?.title ?? "No lectures yet"}</h2>
+              <h2 className="text-2xl md:text-3xl font-black text-white">{featured?.title ?? "No lectures yet"}</h2>
               {featured && <p className="text-white/60 text-sm mt-1">Added {fmtDate(featured.created_at)}</p>}
             </div>
           </div>
@@ -227,20 +256,20 @@ export default function ELearningPortal() {
             </div>
           )}
 
-          <div className="col-span-3 mt-4">
+          <div className="md:col-span-3 mt-4">
             <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center justify-between">
               Video Archive <span className="bg-slate-200 text-slate-600 px-3 py-1 rounded-xl text-xs">{videoLectures.length}</span>
             </h3>
             {videoLectures.length === 0 ? (
               <Empty>No lectures yet.</Empty>
             ) : (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {videoLectures.map((video) => (
                   <div key={video.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4 group hover:border-indigo-200 transition-colors">
                     <button onClick={() => openMaterial(video)} className="w-12 h-12 bg-purple-100 text-purple-600 rounded-xl flex items-center justify-center shrink-0 hover:scale-105"><PlayCircle size={20} /></button>
                     <div className="flex-1 min-w-0">
                       <h4 className="font-bold text-slate-800 text-sm truncate">{video.title}</h4>
-                      <div className="text-xs text-slate-500 mt-1"><span className="font-semibold text-purple-600">{video.file_type}</span> • {video.size_mb} MB • {fmtDate(video.created_at)}</div>
+                      <div className="text-xs text-slate-500 mt-1"><span className="font-semibold text-purple-600">{video.file_type}</span> • {video.external_url ? "Link" : `${video.size_mb} MB`} • {fmtDate(video.created_at)}</div>
                     </div>
                     {staff && <button onClick={() => handleDelete(video)} className="p-2 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16} /></button>}
                   </div>
@@ -261,7 +290,7 @@ export default function ELearningPortal() {
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-blue-100 text-blue-600"><FileText size={18} /></div>
                     <div>
                       <h4 className="font-bold text-slate-800 text-sm">{doc.title}</h4>
-                      <p className="text-xs text-slate-500 font-medium mt-0.5">{doc.file_type} • {doc.size_mb} MB{doc.description ? ` • ${doc.description}` : ""}</p>
+                      <p className="text-xs text-slate-500 font-medium mt-0.5">{doc.file_type} • {doc.external_url ? "Link" : `${doc.size_mb} MB`}{doc.description ? ` • ${doc.description}` : ""}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -288,7 +317,7 @@ export default function ELearningPortal() {
             <div className="space-y-4">
               {assignments.map((a) => {
                 const mine = mySub(a.id);
-                const overdue = a.due_date && a.due_date < new Date().toISOString().slice(0, 10);
+                const overdue = a.due_date && a.due_date < localDate();
                 return (
                   <div key={a.id} className="flex items-center justify-between p-5 rounded-2xl border border-slate-100 hover:border-orange-200 bg-slate-50 transition-all gap-4">
                     <div className="flex items-center gap-5 min-w-0">

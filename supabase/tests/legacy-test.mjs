@@ -15,10 +15,16 @@ await db.exec(`
   create table public.lab_equipment (id uuid primary key default gen_random_uuid(), equipment_name text not null, category text not null, status text not null default 'Available', location text not null, created_at timestamptz not null default now());
   create table public.campus_events (id uuid primary key default gen_random_uuid(), event_name text not null, organizer text not null, event_date date not null, location text not null, created_at timestamptz not null default now());
   insert into public.lab_equipment (equipment_name, category, location) values ('Old Printer', '3D Printing', 'Lab 1');
+  create table public.calendar_events (id uuid primary key default gen_random_uuid(), event_title text not null, event_date date not null, event_type text not null, location text not null, created_at timestamptz not null default now());
+  create table public.profiles (id uuid primary key, full_name text not null default 'User', role text not null default 'student' check (role in ('owner','administration','teacher','student')), created_at timestamptz not null default now());
 `);
 for (const run of [1, 2]) await db.exec(schema);
 await db.exec(`insert into public.lab_equipment (name, category, status) values ('New Printer', '3D Printing', 'Available')`);
 await db.exec(`insert into public.campus_events (title, event_date, location) values ('Hackathon', current_date, 'Hall')`);
 console.log((await db.query(`select name, lab from public.lab_equipment order by name`)).rows);
 console.log((await db.query(`select title from public.campus_events`)).rows);
+await db.exec(`insert into public.profiles (id, full_name, role) values (gen_random_uuid(), 'Parent', 'parent')`);
+console.log("legacy role constraint allows parent");
+await db.exec(`insert into public.calendar_events (event_title, event_date, event_type) values ('No location', current_date, 'meeting')`);
+console.log("legacy calendar event without location saves");
 console.log("legacy migration OK");

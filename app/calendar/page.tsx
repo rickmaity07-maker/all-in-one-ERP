@@ -65,7 +65,7 @@ export default function CalendarPortal() {
         <Modal title="Book Schedule Slot" icon={CalendarDays} onClose={() => setIsModalOpen(false)}>
           <form onSubmit={handleAddEvent} className="space-y-4">
             <Field label="Event Title"><input required className={inputClass} value={form.event_title} onChange={(e) => setForm({ ...form, event_title: e.target.value })} placeholder="e.g. Mechatronics Lab 2" /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Date"><input type="date" required className={inputClass} value={form.event_date} onChange={(e) => setForm({ ...form, event_date: e.target.value })} /></Field>
               <Field label="Start Time"><input type="time" className={inputClass} value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} /></Field>
             </div>
@@ -102,7 +102,7 @@ export default function CalendarPortal() {
         </Modal>
       )}
 
-      <aside className="w-72 bg-white/80 backdrop-blur-xl border-r border-slate-100 flex flex-col shrink-0 z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+      <aside className="hidden md:flex w-72 bg-white/80 backdrop-blur-xl border-r border-slate-100 flex-col shrink-0 z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
         <div className="h-20 flex items-center justify-between px-8 border-b border-slate-100">
           <h2 className="text-xl font-bold text-slate-800 tracking-tight">Schedules</h2>
         </div>
@@ -137,7 +137,7 @@ export default function CalendarPortal() {
       </aside>
 
       <main className="flex-1 bg-[#F4F7FE] flex flex-col min-w-0 overflow-y-auto">
-        <header className="h-24 flex items-center justify-between px-10 shrink-0">
+        <header className="flex flex-wrap gap-3 md:h-24 items-center justify-between px-4 md:px-10 py-4 md:py-0 shrink-0">
           <div className="flex items-center gap-4">
             <h1 className="text-2xl font-black text-slate-800">{displayDate.toLocaleString("default", { month: "long", year: "numeric" })}</h1>
             <div className="flex items-center bg-white rounded-2xl shadow-sm border border-slate-100 p-1">
@@ -153,17 +153,17 @@ export default function CalendarPortal() {
           )}
         </header>
 
-        <div className="px-10 pb-10 flex-1 flex flex-col">
-          <div className="bg-white rounded-4xl p-6 shadow-[0_8px_24px_rgba(0,0,0,0.02)] border border-slate-100 flex-1 flex flex-col relative">
+        <div className="px-4 md:px-10 pb-10 flex-1 flex flex-col">
+          <div className="bg-white rounded-3xl md:rounded-4xl p-2 md:p-6 shadow-[0_8px_24px_rgba(0,0,0,0.02)] border border-slate-100 flex-1 flex flex-col relative">
             {events.loading && (
               <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-20 flex items-center justify-center rounded-4xl">
                 <div className="flex items-center gap-3 text-slate-500 font-bold"><Loader2 className="animate-spin" /> Syncing calendar...</div>
               </div>
             )}
-            <div className="grid grid-cols-7 gap-4 mb-2">
+            <div className="grid grid-cols-7 gap-1 md:gap-4 mb-2">
               {WEEKDAYS.map((d) => <div key={d} className="text-xs font-bold text-slate-400 uppercase tracking-wider px-2">{d}</div>)}
             </div>
-            <div className="grid grid-cols-7 gap-4 flex-1 auto-rows-fr">
+            <div className="grid grid-cols-7 gap-1 md:gap-4 flex-1 auto-rows-fr">
               {Array.from({ length: cellCount }).map((_, i) => {
                 const dayNum = i - leading + 1;
                 const inMonth = dayNum >= 1 && dayNum <= daysInMonth;
@@ -174,7 +174,7 @@ export default function CalendarPortal() {
                   <div
                     key={i}
                     onDoubleClick={() => inMonth && openNew(key)}
-                    className={`min-h-24 p-2 rounded-2xl border transition-all flex flex-col ${inMonth ? "border-slate-100 bg-slate-50/30 hover:border-indigo-200" : "border-transparent opacity-30"} ${isToday ? "ring-2 ring-indigo-400" : ""}`}
+                    className={`min-h-16 md:min-h-24 p-1 md:p-2 rounded-xl md:rounded-2xl min-w-0 border transition-all flex flex-col ${inMonth ? "border-slate-100 bg-slate-50/30 hover:border-indigo-200" : "border-transparent opacity-30"} ${isToday ? "ring-2 ring-indigo-400" : ""}`}
                     title={inMonth && canEdit ? "Double-click to add an event" : undefined}
                   >
                     <span className={`text-xs font-bold mb-2 ${isToday ? "text-indigo-600" : "text-slate-700"}`}>{inMonth ? dayNum : ""}</span>

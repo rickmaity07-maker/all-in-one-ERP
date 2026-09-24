@@ -5,7 +5,7 @@ import { Plus, Settings, Code, Wrench, Trash2, CheckSquare, CalendarClock, User,
 import { useSession, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, Card, Loading, Empty, AccessDenied, Badge, inputClass, confirmAction } from "@/components/ui";
-import { fmtDate, matches, type Row } from "@/lib/utils";
+import { fmtDate, matches, localDate, type Row } from "@/lib/utils";
 
 // Older rows stored the category in `assignee` and the workflow type in `priority`; kept for compatibility.
 const CATEGORIES = {
@@ -46,7 +46,7 @@ export default function TasksPortal() {
     if (ok) setEditing(null);
   };
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
   const catOf = (t: Row): Cat => ((t.assignee as Cat) in CATEGORIES ? (t.assignee as Cat) : "mechatronics");
   const filtered = tasks.rows
     .filter((t) => activeCategory === "all" || catOf(t) === activeCategory)
@@ -73,7 +73,7 @@ export default function TasksPortal() {
         <Modal title={editing === "new" ? "Create Task" : "Edit Task"} icon={CheckSquare} onClose={() => setEditing(null)}>
           <form onSubmit={handleSave} className="space-y-4">
             <Field label="Task Title"><input required className={inputClass} value={form.task_title} onChange={(e) => setForm({ ...form, task_title: e.target.value })} /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Category">
                 <select className={inputClass} value={form.assignee} onChange={(e) => setForm({ ...form, assignee: e.target.value })}>
                   {(Object.keys(CATEGORIES) as Cat[]).map((k) => <option key={k} value={k}>{CATEGORIES[k].label}</option>)}
@@ -81,7 +81,7 @@ export default function TasksPortal() {
               </Field>
               <Field label="Workflow Type"><input className={inputClass} value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} placeholder="e.g. SolidWorks CAD" /></Field>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Owner"><input className={inputClass} value={form.owner_name} onChange={(e) => setForm({ ...form, owner_name: e.target.value })} /></Field>
               <Field label="Due Date"><input type="date" className={inputClass} value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></Field>
             </div>

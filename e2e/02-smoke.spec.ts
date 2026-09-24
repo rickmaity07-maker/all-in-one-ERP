@@ -14,7 +14,7 @@ test.describe("Smoke: every module loads", () => {
 
   test("all routes render without errors", async ({ page }) => {
     const errors = watchForErrors(page);
-    await login(page, owner.email, owner.password);
+    await login(page, owner);
     const failures: string[] = [];
     for (const route of ROUTES) {
       await test.step(route, async () => {

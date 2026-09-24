@@ -1,0 +1,31 @@
+# Nightly export of every table (and the list of stored files) to a private workflow artifact.
+# The free Supabase plan has no automatic backups. Download a backup from
+# GitHub → Actions → "Nightly backup" → a run → Artifacts. Kept for 30 days.
+name: Nightly backup
+
+on:
+  schedule:
+    - cron: "40 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Export database
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/backup.mjs backup
+      - uses: actions/upload-artifact@v4
+        with:
+          name: erp-backup-${{ github.run_number }}
+          path: backup
+          retention-days: 30

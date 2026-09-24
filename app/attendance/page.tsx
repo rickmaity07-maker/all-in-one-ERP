@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { useSession, isAdmin, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, PageHeading, Card, Table, Loading, Empty, Badge, StatCard, toast } from "@/components/ui";
-import { downloadCsv, errorMessage, fmtDate, initials, matches, type Row } from "@/lib/utils";
+import { downloadCsv, errorMessage, fmtDate, initials, matches, localDate, type Row } from "@/lib/utils";
 
 type TabId = "register" | "reports";
 const STATUSES = ["Present", "Late", "Absent", "Excused"] as const;
@@ -16,7 +16,7 @@ const STATUS_STYLE: Record<string, string> = {
   Absent: "bg-red-500 text-white",
   Excused: "bg-blue-500 text-white",
 };
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localDate();
 // Late counts as attended; excused sessions are left out of the rate.
 const rate = (rows: Row[]) => {
   const counted = rows.filter((r) => r.status !== "Excused");
@@ -77,8 +77,8 @@ export default function AttendancePage() {
   const classRate = rate(classRows);
 
   const classPicker = (
-    <div className="flex gap-3 items-center">
-      <select value={activeClass} onChange={(e) => setClassId(e.target.value)} className="text-sm font-semibold bg-white border border-slate-200 rounded-xl px-3 py-2.5 outline-none min-w-56">
+    <div className="flex flex-wrap gap-3 items-center">
+      <select value={activeClass} onChange={(e) => setClassId(e.target.value)} className="text-sm font-semibold bg-white border border-slate-200 rounded-xl px-3 py-2.5 outline-none w-full md:w-auto md:min-w-56">
         {myClasses.map((c) => <option key={c.id} value={c.id}>{c.name}{c.code ? ` (${c.code})` : ""}</option>)}
       </select>
       {activeTab === "register" && <input type="date" value={date} max={today()} onChange={(e) => setDate(e.target.value)} className="text-sm font-semibold bg-white border border-slate-200 rounded-xl px-3 py-2 outline-none" />}
@@ -99,7 +99,7 @@ export default function AttendancePage() {
           <Empty>You are not enrolled in any classes.</Empty>
         ) : (
           <>
-            <div className="grid grid-cols-3 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
               {myClasses.map((c) => {
                 const r = rate(mine.filter((a) => a.class_id === c.id));
                 return <StatCard key={c.id} label={c.name} value={r === null ? "No sessions" : `${r}%`} icon={r !== null && r < 80 ? AlertTriangle : UserCheck} color={r !== null && r < 80 ? "red" : "emerald"} />;
@@ -146,7 +146,7 @@ export default function AttendancePage() {
           <Card
             title={`${roster.length} students • ${Object.keys(marks).length} marked`}
             action={
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button onClick={markAll} disabled={!roster.length} className="flex items-center gap-2 text-sm font-bold text-emerald-600 bg-emerald-50 px-4 py-2 rounded-xl disabled:opacity-40"><CheckCheck size={16} /> Mark all present</button>
                 <button onClick={saveRegister} disabled={saving || !roster.length} className="flex items-center gap-2 text-sm font-bold text-white bg-indigo-600 px-5 py-2 rounded-xl hover:bg-indigo-700 disabled:opacity-40">
                   {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save register
@@ -159,10 +159,10 @@ export default function AttendancePage() {
             ) : (
               <div className="space-y-2">
                 {roster.filter((e) => matches(search, e.student_name)).map((e) => (
-                  <div key={e.id} className="flex items-center gap-4 p-3 rounded-2xl border border-slate-100">
+                  <div key={e.id} className="flex flex-wrap md:flex-nowrap items-center gap-2 md:gap-4 p-3 rounded-2xl border border-slate-100">
                     <span className="w-9 h-9 rounded-full bg-slate-800 text-white text-xs font-bold flex items-center justify-center shrink-0">{initials(e.student_name)}</span>
-                    <span className="font-bold text-slate-800 w-56 truncate">{e.student_name}</span>
-                    <div className="flex gap-1.5">
+                    <span className="font-bold text-slate-800 flex-1 md:flex-none md:w-56 truncate min-w-0">{e.student_name}</span>
+                    <div className="flex flex-wrap gap-1.5 w-full md:w-auto">
                       {STATUSES.map((s) => (
                         <button
                           key={s}
@@ -177,7 +177,7 @@ export default function AttendancePage() {
                       placeholder="Note (optional)"
                       value={marks[e.student_id]?.note ?? ""}
                       onChange={(ev) => setMarks((m) => ({ ...m, [e.student_id]: { status: m[e.student_id]?.status ?? "Present", note: ev.target.value } }))}
-                      className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
+                      className="w-full md:w-auto md:flex-1 min-w-0 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none"
                     />
                   </div>
                 ))}
@@ -188,7 +188,7 @@ export default function AttendancePage() {
       ) : (
         <>
           <PageHeading title="Attendance Report" subtitle="Students under 80% are flagged for follow-up.">{classPicker}</PageHeading>
-          <div className="grid grid-cols-3 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <StatCard label="Sessions Recorded" value={sessions} icon={BarChart3} color="indigo" />
             <StatCard label="Class Attendance" value={classRate === null ? "—" : `${classRate}%`} icon={UserCheck} color="emerald" />
             <StatCard label="Below 80%" value={perStudent.filter((p) => p.rate !== null && p.rate < 80).length} icon={AlertTriangle} color="red" />

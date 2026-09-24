@@ -39,6 +39,11 @@ export default function SettingsPage() {
     const { error } = await supabase.auth.updateUser({ password });
     setBusy("");
     if (error) return toast(errorMessage(error), "error");
+    if (profile?.must_change_password) {
+      const { error: flagError } = await supabase.from("profiles").update({ must_change_password: false }).eq("id", profile.id);
+      if (flagError) return toast(errorMessage(flagError), "error");
+      await refresh();
+    }
     setPassword("");
     setConfirm("");
     toast("Password changed.");
@@ -46,11 +51,18 @@ export default function SettingsPage() {
 
   return (
     <main className="flex-1 bg-[#F4F7FE] overflow-y-auto">
-      <div className="px-10 py-10 space-y-8 max-w-4xl">
+      <div className="px-4 md:px-10 py-6 md:py-10 space-y-8 max-w-4xl">
         <div>
-          <h1 className="text-3xl font-black text-slate-800 mb-2 flex items-center gap-3"><Settings size={28} className="text-indigo-600" /> Settings</h1>
+          <h1 className="text-2xl md:text-3xl font-black text-slate-800 mb-2 flex items-center gap-3"><Settings size={28} className="text-indigo-600" /> Settings</h1>
           <p className="text-slate-500 font-medium">Manage your account and keep the app up to date.</p>
         </div>
+
+        {profile?.must_change_password && (
+          <div className="p-5 rounded-3xl bg-orange-50 border border-orange-200 text-orange-800 font-semibold flex items-center gap-3">
+            <Lock size={20} className="shrink-0" />
+            You signed in with a temporary password. Choose your own password below to continue using the app.
+          </div>
+        )}
 
         <Card title="App Updates">
           <div className="flex items-center justify-between gap-6">
@@ -88,7 +100,7 @@ export default function SettingsPage() {
           </div>
         </Card>
 
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Card title="Profile">
             <form onSubmit={saveName} className="space-y-4">
               <Field label="Email">

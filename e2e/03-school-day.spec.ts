@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { hasOwner, owner, login, testUser, RUN, expectToast, watchForErrors } from "./helpers";
+import { hasOwner, owner, login, inviteUser, testUser, RUN, expectToast, watchForErrors } from "./helpers";
 
 // One full school day, in order: the owner creates staff and a student, the teacher runs a class,
 // the student sees the results, and the owner approves an absence note and cleans up.
@@ -16,22 +16,11 @@ const todayShort = new Date().toLocaleDateString("en-US", { weekday: "short" });
 
 const acceptDialogs = (page: Page) => page.on("dialog", (d) => d.accept());
 
-async function invite(page: Page, user: { name: string; email: string; password: string }, role: string) {
-  await page.goto("/admin");
-  await page.getByRole("button", { name: "Invite User" }).click();
-  const modal = page.locator("form").filter({ hasText: "Temporary Password" });
-  await modal.getByPlaceholder("e.g. Dr. Weber").fill(user.name);
-  await modal.locator('input[type="email"]').fill(user.email);
-  await modal.getByPlaceholder(/At least 8/).fill(user.password);
-  await modal.locator("select").selectOption(role);
-  await modal.getByRole("button", { name: "Create Account" }).click();
-  await expectToast(page, /User created/);
-}
 
 test("owner creates a teacher and a student account", async ({ page }) => {
-  await login(page, owner.email, owner.password);
-  await invite(page, teacher, "teacher");
-  await invite(page, student, "student");
+  await login(page, owner);
+  await inviteUser(page, teacher, "teacher");
+  await inviteUser(page, student, "student");
   await page.getByPlaceholder(/Search profiles/).fill(RUN);
   await expect(page.getByText(teacher.name)).toBeVisible();
   await expect(page.getByText(student.name)).toBeVisible();
@@ -40,12 +29,12 @@ test("owner creates a teacher and a student account", async ({ page }) => {
 test("teacher creates a class, enrolls the student, takes attendance and grades", async ({ page }) => {
   const errors = watchForErrors(page);
   acceptDialogs(page);
-  await login(page, teacher.email, teacher.password);
+  await login(page, teacher);
 
   // Class + roster
   await page.goto("/classes");
   await page.getByRole("button", { name: "New Class" }).click();
-  await page.getByPlaceholder("e.g. Advanced Kinematics").fill(className);
+  await page.getByLabel("Class Name").fill(className);
   await page.getByPlaceholder("MEC-401").fill("E2E-101");
   await page.getByRole("button", { name: WEEKDAYS.includes(todayShort) ? todayShort : "Mon", exact: true }).click();
   await page.getByRole("button", { name: "Save Class" }).click();
@@ -56,7 +45,6 @@ test("teacher creates a class, enrolls the student, takes attendance and grades"
   await page.getByRole("button", { name: "Enroll" }).click();
   await expectToast(page, /1 student\(s\) enrolled/);
   await page.keyboard.press("Escape");
-  await page.mouse.click(5, 300);
 
   // Attendance
   await page.goto("/attendance");
@@ -105,8 +93,8 @@ test("teacher and student chat live in a private DM", async ({ browser }) => {
   const sCtx = await browser.newContext();
   const t = await tCtx.newPage();
   const s = await sCtx.newPage();
-  await login(t, teacher.email, teacher.password);
-  await login(s, student.email, student.password);
+  await login(t, teacher);
+  await login(s, student);
   await t.goto("/chat");
   await s.goto("/chat");
   await t.getByRole("button", { name: new RegExp(student.name) }).click();
@@ -122,7 +110,7 @@ test("teacher and student chat live in a private DM", async ({ browser }) => {
 
 test("student sees their class, attendance, grade and notice; admin areas stay locked", async ({ page }) => {
   const errors = watchForErrors(page);
-  await login(page, student.email, student.password);
+  await login(page, student);
   await expect(page.getByText(notice)).toBeVisible();
 
   await page.goto("/classes");
@@ -160,7 +148,7 @@ test("student sees their class, attendance, grade and notice; admin areas stay l
 
 test("owner approves the absence note and cleans up test data", async ({ page }) => {
   acceptDialogs(page);
-  await login(page, owner.email, owner.password);
+  await login(page, owner);
 
   await page.goto("/leave");
   const req = page.locator("tr").filter({ hasText: student.name });

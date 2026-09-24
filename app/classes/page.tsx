@@ -99,8 +99,8 @@ export default function ClassesPage() {
       {editing && (
         <Modal title={editing === "new" ? "New Class" : "Edit Class"} icon={School} onClose={() => setEditing(null)}>
           <form onSubmit={save} className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
-              <div className="col-span-2"><Field label="Class Name"><input required className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Advanced Kinematics" /></Field></div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-2"><Field label="Class Name"><input required className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Advanced Kinematics" /></Field></div>
               <Field label="Code"><input className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="MEC-401" /></Field>
             </div>
             {admin && (
@@ -111,7 +111,7 @@ export default function ClassesPage() {
                 </select>
               </Field>
             )}
-            <Field label="Days">
+            <Field label="Days" group>
               <div className="flex gap-2 flex-wrap">
                 {WEEKDAYS.map((d) => (
                   <button
@@ -125,7 +125,7 @@ export default function ClassesPage() {
                 ))}
               </div>
             </Field>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Field label="Starts"><input type="time" required className={inputClass} value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} /></Field>
               <Field label="Ends"><input type="time" required className={inputClass} value={form.end_time} onChange={(e) => setForm({ ...form, end_time: e.target.value })} /></Field>
               <Field label="Room"><input className={inputClass} value={form.room} onChange={(e) => setForm({ ...form, room: e.target.value })} /></Field>
@@ -148,7 +148,7 @@ export default function ClassesPage() {
           {rosterFor(rosterOf.id).length === 0 ? (
             <Empty>No students enrolled yet.</Empty>
           ) : (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {rosterFor(rosterOf.id).map((e) => (
                 <div key={e.id} className="flex items-center justify-between p-3 rounded-xl border border-slate-100">
                   <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
@@ -171,7 +171,7 @@ export default function ClassesPage() {
           {visible.length === 0 ? (
             <Empty>{staff ? "No classes yet. Click “New Class” to create your first section." : "You are not enrolled in any classes yet."}</Empty>
           ) : (
-            <div className="grid grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {visible.map((c) => (
                 <div key={c.id} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
                   <div className={`${colorOf(c.id)} h-2`} />
@@ -208,7 +208,7 @@ export default function ClassesPage() {
             {timetableClasses.length === 0 ? (
               <Empty>No classes scheduled.</Empty>
             ) : (
-              <div className="grid grid-cols-6 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
                 {WEEKDAYS.map((d) => {
                   const todays = timetableClasses
                     .filter((c) => String(c.days ?? "").split(",").includes(d))

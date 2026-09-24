@@ -5,7 +5,7 @@ import { Cpu, Plus, Wrench, CalendarPlus, CalendarCheck, Trash2, Printer as Prin
 import { useSession, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Table, Loading, Empty, Badge, StatCard, IconButton, inputClass, toast, confirmAction } from "@/components/ui";
-import { fmtDate, matches, type Row } from "@/lib/utils";
+import { fmtDate, matches, localDate, type Row } from "@/lib/utils";
 
 type TabId = "equipment" | "bookings" | "mine";
 const STATUS_COLOR: Record<string, string> = { Available: "green", "In Use": "orange", Maintenance: "red", Retired: "slate" };
@@ -23,7 +23,7 @@ export default function MakerSpace() {
   const [eq, setEq] = useState({ name: "", lab: "", category: "3D Printing", notes: "" });
   const [bk, setBk] = useState({ equipment_id: "", booking_date: "", start_time: "09:00", end_time: "11:00", purpose: "" });
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
   const nameOf = (id: string) => equipment.rows.find((e) => e.id === id)?.name ?? "Removed equipment";
   const upcoming = bookings.rows.filter((b) => b.booking_date >= today);
   const mine = upcoming.filter((b) => b.booked_by === profile?.id);
@@ -99,7 +99,7 @@ export default function MakerSpace() {
         <Modal title="Add Equipment" icon={Wrench} onClose={() => setModal("")}>
           <form onSubmit={handleEquipment} className="space-y-4">
             <Field label="Name"><input required className={inputClass} value={eq.name} onChange={(e) => setEq({ ...eq, name: e.target.value })} placeholder="e.g. Prusa MK4 #2" /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Lab / Room"><input className={inputClass} value={eq.lab} onChange={(e) => setEq({ ...eq, lab: e.target.value })} placeholder="e.g. Lab 3" /></Field>
               <Field label="Category">
                 <select className={inputClass} value={eq.category} onChange={(e) => setEq({ ...eq, category: e.target.value })}>
@@ -117,7 +117,7 @@ export default function MakerSpace() {
         <Modal title={`Book — ${nameOf(bk.equipment_id)}`} icon={CalendarPlus} onClose={() => setModal("")}>
           <form onSubmit={handleBooking} className="space-y-4">
             <Field label="Date"><input type="date" min={today} required className={inputClass} value={bk.booking_date} onChange={(e) => setBk({ ...bk, booking_date: e.target.value })} /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="From"><input type="time" required className={inputClass} value={bk.start_time} onChange={(e) => setBk({ ...bk, start_time: e.target.value })} /></Field>
               <Field label="Until"><input type="time" required className={inputClass} value={bk.end_time} onChange={(e) => setBk({ ...bk, end_time: e.target.value })} /></Field>
             </div>
@@ -138,7 +138,7 @@ export default function MakerSpace() {
       ) : activeTab === "equipment" ? (
         <>
           <PageHeading title="MakerSpace & Labs" subtitle="Browse lab equipment, check availability and reserve time slots." />
-          <div className="grid grid-cols-3 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <StatCard label="Machines" value={equipment.rows.length} icon={Cpu} color="indigo" />
             <StatCard label="Available" value={equipment.rows.filter((x) => x.status === "Available").length} icon={CalendarCheck} color="emerald" />
             <StatCard label="In Maintenance" value={equipment.rows.filter((x) => x.status === "Maintenance").length} icon={Wrench} color="red" />
@@ -146,7 +146,7 @@ export default function MakerSpace() {
           {visibleEquipment.length === 0 ? (
             <Empty>No equipment listed yet.</Empty>
           ) : (
-            <div className="grid grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {visibleEquipment.map((x) => {
                 const Icon = categoryIcon(x.category);
                 const todays = bookings.rows.filter((b) => b.equipment_id === x.id && b.booking_date === today);

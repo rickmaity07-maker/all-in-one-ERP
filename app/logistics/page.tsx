@@ -69,11 +69,11 @@ export default function Logistics() {
         <Modal title="Add Shuttle Route" icon={Bus} onClose={() => setIsModalOpen(false)}>
           <form onSubmit={handleSave} className="space-y-4">
             <Field label="Route Name"><input required className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Line 1 — City Centre" /></Field>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Departure"><input type="time" required className={inputClass} value={form.departure_time} onChange={(e) => setForm({ ...form, departure_time: e.target.value })} /></Field>
               <Field label="Seats"><input type="number" min="1" className={inputClass} value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} /></Field>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Vehicle"><input className={inputClass} value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })} placeholder="e.g. Bus WÜ-EA 123" /></Field>
               <Field label="Driver"><input className={inputClass} value={form.driver} onChange={(e) => setForm({ ...form, driver: e.target.value })} /></Field>
             </div>
@@ -112,7 +112,7 @@ export default function Logistics() {
         <>
           <PageHeading title={activeTab === "routes" ? "Logistics & Transport" : "My Routes"} subtitle="Campus shuttle timetable with live status. Reserve a seat on the routes you ride." />
           {activeTab === "routes" && (
-            <div className="grid grid-cols-3 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
               <StatCard label="Routes" value={routes.rows.length} icon={Bus} color="indigo" />
               <StatCard label="Seats Reserved" value={`${seatsUsed}/${seatsTotal}`} icon={User} color="blue" />
               <StatCard label="Delayed / Cancelled" value={routes.rows.filter((r) => r.status === "Delayed" || r.status === "Cancelled").length} icon={AlertTriangle} color="orange" />

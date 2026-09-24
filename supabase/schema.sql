@@ -939,3 +939,341 @@ alter table public.campus_events alter column title set not null;
 
 -- Ask the API layer to pick up the new columns immediately.
 notify pgrst, 'reload schema';
+
+-- ---------------------------------------------------------------------
+-- 9. ACCOUNT APPROVAL, PASSWORD RESETS, PRIVACY, PARENTS, NOTIFICATIONS,
+--    BOOKING CLASHES, VIDEO LINKS
+-- ---------------------------------------------------------------------
+alter table public.profiles add column if not exists pending boolean not null default false;
+alter table public.profiles add column if not exists must_change_password boolean not null default false;
+
+-- Self sign-ups now wait for an administrator. The very first account is still the owner.
+create or replace function public.handle_new_user() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare first_user boolean;
+begin
+  first_user := not exists (select 1 from public.profiles where role = 'owner');
+  insert into public.profiles (id, full_name, email, role, active, pending)
+  values (
+    new.id,
+    coalesce(nullif(new.raw_user_meta_data->>'full_name', ''), split_part(new.email, '@', 1)),
+    new.email,
+    case when first_user then 'owner' else 'student' end,
+    first_user,
+    not first_user
+  )
+  on conflict (id) do update set email = excluded.email;
+  return new;
+end $$;
+
+create or replace function public.guard_profile_update() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return new; end if; -- SQL editor / service role
+  if (new.role is distinct from old.role or new.active is distinct from old.active or new.pending is distinct from old.pending
+      or new.email is distinct from old.email) then
+    if not public.is_admin() then raise exception 'Only administrators can change roles, access or email.'; end if;
+    if new.role = 'owner' and public.app_role() <> 'owner' then raise exception 'Only an owner can grant the owner role.'; end if;
+    if old.role = 'owner' and public.app_role() <> 'owner' then raise exception 'Only an owner can change another owner.'; end if;
+  end if;
+  -- Users may clear their own "change password" flag, never set it for someone else.
+  if new.must_change_password is distinct from old.must_change_password and not public.is_admin() and new.id <> auth.uid() then
+    raise exception 'Not allowed.';
+  end if;
+  return new;
+end $$;
+
+-- Email addresses are private: only administrators can read them (through admin_list_profiles).
+revoke select on public.profiles from anon, authenticated;
+grant select (id, full_name, role, active, pending, must_change_password, created_at) on public.profiles to authenticated;
+
+create or replace function public.admin_list_profiles()
+returns table (id uuid, full_name text, email text, role text, active boolean, pending boolean, created_at timestamptz)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Administrators only.'; end if;
+  return query select p.id, p.full_name, p.email, p.role, p.active, p.pending, p.created_at from public.profiles p order by p.full_name;
+end $$;
+revoke execute on function public.admin_list_profiles() from public, anon;
+grant execute on function public.admin_list_profiles() to authenticated;
+
+-- ---------- Password resets without email ----------
+create table if not exists public.password_reset_requests (
+  id uuid primary key default gen_random_uuid(),
+  email text not null,
+  profile_id uuid,
+  resolved_at timestamptz,
+  created_at timestamptz not null default now()
+);
+alter table public.password_reset_requests enable row level security;
+drop policy if exists "reset requests admin" on public.password_reset_requests;
+create policy "reset requests admin" on public.password_reset_requests for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+-- Callable from the login screen. Never reveals whether an email exists; one request per 15 minutes.
+create or replace function public.request_password_reset(p_email text) returns void
+language plpgsql security definer set search_path = public as $$
+declare pid uuid;
+begin
+  select id into pid from public.profiles where lower(email) = lower(trim(p_email));
+  if pid is null then return; end if;
+  if exists (select 1 from public.password_reset_requests where profile_id = pid and resolved_at is null and created_at > now() - interval '15 minutes') then return; end if;
+  insert into public.password_reset_requests (email, profile_id) values (lower(trim(p_email)), pid);
+end $$;
+revoke execute on function public.request_password_reset(text) from public;
+grant execute on function public.request_password_reset(text) to anon, authenticated;
+
+-- Admin sets a temporary password; the user must change it at next sign-in.
+create or replace function public.admin_reset_password(p_user uuid, p_password text) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare target_role text;
+begin
+  if not public.is_admin() then raise exception 'Administrators only.'; end if;
+  if length(coalesce(p_password, '')) < 8 then raise exception 'Temporary password must be at least 8 characters.'; end if;
+  select role into target_role from public.profiles where id = p_user;
+  if target_role is null then raise exception 'User not found.'; end if;
+  if target_role = 'owner' and public.app_role() <> 'owner' then raise exception 'Only an owner can reset an owner''s password.'; end if;
+  update auth.users set encrypted_password = extensions.crypt(p_password, extensions.gen_salt('bf')), updated_at = now() where id = p_user;
+  update public.profiles set must_change_password = true where id = p_user;
+  update public.password_reset_requests set resolved_at = now() where profile_id = p_user and resolved_at is null;
+end $$;
+revoke execute on function public.admin_reset_password(uuid, text) from public, anon;
+grant execute on function public.admin_reset_password(uuid, text) to authenticated;
+
+-- ---------- Parents & guardians ----------
+create table if not exists public.guardian_links (
+  id uuid primary key default gen_random_uuid(),
+  guardian_id uuid not null,
+  student_id uuid not null,
+  relationship text,
+  created_at timestamptz not null default now(),
+  unique (guardian_id, student_id)
+);
+alter table public.guardian_links enable row level security;
+drop policy if exists "guardian links read" on public.guardian_links;
+drop policy if exists "guardian links admin" on public.guardian_links;
+create policy "guardian links read" on public.guardian_links for select to authenticated using (guardian_id = auth.uid() or student_id = auth.uid() or public.is_staff());
+create policy "guardian links admin" on public.guardian_links for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+create or replace function public.is_guardian_of(p_student uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.app_role() = 'parent' and exists (select 1 from public.guardian_links where guardian_id = auth.uid() and student_id = p_student)
+$$;
+
+alter table public.leave_requests add column if not exists student_id uuid;
+alter table public.leave_requests add column if not exists student_name text;
+
+do $$
+declare r record;
+begin
+  for r in select * from (values
+    ('attendance', 'guardian read', 'public.is_guardian_of(student_id)'),
+    ('grades', 'guardian read', 'public.is_guardian_of(student_id)'),
+    ('class_enrollments', 'guardian read', 'public.is_guardian_of(student_id)'),
+    ('invoices', 'guardian read', 'public.is_guardian_of(student_id)'),
+    ('registrar_records', 'guardian read', 'public.is_guardian_of(profile_id)'),
+    ('assignment_submissions', 'guardian read', 'public.is_guardian_of(student_id)'),
+    ('housing_assignments', 'guardian read', 'public.is_guardian_of(resident_id)'),
+    ('meal_accounts', 'guardian read', 'public.is_guardian_of(profile_id)'),
+    ('leave_requests', 'guardian read', 'public.is_guardian_of(student_id)'),
+    ('student_courses', 'guardian read', 'exists (select 1 from public.registrar_records rr where rr.id = record_id and public.is_guardian_of(rr.profile_id))'),
+    ('assessments', 'guardian read', 'exists (select 1 from public.class_enrollments ce where ce.class_id = assessments.class_id and public.is_guardian_of(ce.student_id))')
+  ) as x(tbl, pol, expr)
+  loop
+    execute format('drop policy if exists %I on public.%I', r.pol, r.tbl);
+    execute format('create policy %I on public.%I for select to authenticated using (%s)', r.pol, r.tbl, r.expr);
+  end loop;
+end $$;
+
+-- Parents file absence notes for their own children only.
+drop policy if exists "leave insert" on public.leave_requests;
+create policy "leave insert" on public.leave_requests for insert to authenticated with check (
+  public.is_member() and (student_id is null or public.is_guardian_of(student_id) or public.is_admin())
+);
+
+create or replace function public.enforce_teaching_insert() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare me text;
+begin
+  if auth.uid() is null then return new; end if;
+  me := (select full_name from public.profiles where id = auth.uid());
+  if tg_table_name = 'announcements' then
+    new.author_id := auth.uid(); new.author_name := me;
+  elsif tg_table_name = 'leave_requests' then
+    new.requester_id := auth.uid(); new.requester_name := me; new.requester_role := public.app_role();
+    new.status := 'Pending'; new.reviewed_by_name := null;
+    new.student_name := case when new.student_id is null then null else (select full_name from public.profiles where id = new.student_id) end;
+  elsif tg_table_name = 'classes' and not public.is_admin() then
+    new.teacher_id := auth.uid(); new.teacher_name := me;
+  end if;
+  return new;
+end $$;
+
+-- ---------- Double-booking protection ----------
+create or replace function public.check_class_clash() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare c record;
+begin
+  if new.days is null or new.start_time is null or new.end_time is null then return new; end if;
+  if new.end_time <= new.start_time then raise exception 'A class must end after it starts.'; end if;
+  for c in
+    select * from public.classes o
+    where o.id <> new.id
+      and string_to_array(o.days, ',') && string_to_array(new.days, ',')
+      and o.start_time < new.end_time and new.start_time < o.end_time
+      and (o.term is null or new.term is null or lower(o.term) = lower(new.term))
+  loop
+    if new.room is not null and c.room is not null and lower(trim(c.room)) = lower(trim(new.room)) then
+      raise exception 'Room % is already booked by "%" (% %–%).', new.room, c.name, c.days, c.start_time, c.end_time;
+    end if;
+    if new.teacher_id is not null and c.teacher_id = new.teacher_id then
+      raise exception '% already teaches "%" at that time (% %–%).', coalesce(new.teacher_name, 'This teacher'), c.name, c.days, c.start_time, c.end_time;
+    end if;
+  end loop;
+  return new;
+end $$;
+
+drop trigger if exists classes_clash on public.classes;
+create trigger classes_clash before insert or update on public.classes
+  for each row execute function public.check_class_clash();
+
+-- ---------- Lecture links (YouTube / OneDrive) for videos over the upload limit ----------
+alter table public.course_materials add column if not exists external_url text;
+
+-- ---------- In-app notifications ----------
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null,
+  title text not null,
+  body text,
+  link text,
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists notifications_user_idx on public.notifications (user_id, created_at desc);
+alter table public.notifications enable row level security;
+drop policy if exists "notifications own read" on public.notifications;
+drop policy if exists "notifications own update" on public.notifications;
+drop policy if exists "notifications own delete" on public.notifications;
+create policy "notifications own read" on public.notifications for select to authenticated using (user_id = auth.uid());
+create policy "notifications own update" on public.notifications for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "notifications own delete" on public.notifications for delete to authenticated using (user_id = auth.uid());
+
+create or replace function public.notify_user(p_user uuid, p_title text, p_body text, p_link text) returns void
+language sql security definer set search_path = public as $$
+  insert into public.notifications (user_id, title, body, link)
+  select p_user, p_title, p_body, p_link where p_user is not null and p_user is distinct from auth.uid()
+$$;
+revoke execute on function public.notify_user(uuid, text, text, text) from public, anon, authenticated;
+
+create or replace function public.notify_guardians(p_student uuid, p_title text, p_body text, p_link text) returns void
+language sql security definer set search_path = public as $$
+  insert into public.notifications (user_id, title, body, link)
+  select g.guardian_id, p_title, p_body, p_link from public.guardian_links g where g.student_id = p_student
+$$;
+revoke execute on function public.notify_guardians(uuid, text, text, text) from public, anon, authenticated;
+
+create or replace function public.on_notify_event() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare t text; cls text; who text; other uuid;
+begin
+  if tg_table_name = 'grades' then
+    if new.score is null or (tg_op = 'UPDATE' and new.score is not distinct from old.score) then return new; end if;
+    select a.title, c.name into t, cls from public.assessments a join public.classes c on c.id = a.class_id where a.id = new.assessment_id;
+    perform public.notify_user(new.student_id, 'New grade: ' || t, cls || ' — score ' || new.score, '/gradebook');
+    who := (select full_name from public.profiles where id = new.student_id);
+    perform public.notify_guardians(new.student_id, 'New grade for ' || who, t || ' (' || cls || '): ' || new.score, '/family');
+  elsif tg_table_name = 'attendance' then
+    if new.status not in ('Absent', 'Late') or (tg_op = 'UPDATE' and new.status is not distinct from old.status) then return new; end if;
+    cls := (select name from public.classes where id = new.class_id);
+    perform public.notify_guardians(new.student_id, coalesce(new.student_name, 'Your child') || ' marked ' || lower(new.status),
+      cls || ' on ' || to_char(new.session_date, 'DD Mon YYYY'), '/family');
+  elsif tg_table_name = 'announcements' then
+    insert into public.notifications (user_id, title, body, link)
+    select p.id, 'Notice: ' || new.title, left(coalesce(new.body, ''), 140), '/announcements'
+    from public.profiles p
+    where p.active and p.id <> coalesce(new.author_id, '00000000-0000-0000-0000-000000000000')
+      and (new.audience = 'all'
+        or (new.audience = 'staff' and p.role in ('owner','administration','teacher'))
+        or (new.audience = 'students' and p.role in ('student','parent')));
+  elsif tg_table_name = 'leave_requests' then
+    if tg_op = 'UPDATE' and new.status is distinct from old.status and new.status in ('Approved','Rejected') then
+      perform public.notify_user(new.requester_id, 'Leave request ' || lower(new.status),
+        to_char(new.start_date, 'DD Mon') || ' – ' || to_char(new.end_date, 'DD Mon') || coalesce(' • ' || new.reviewed_by_name, ''), '/leave');
+    end if;
+  elsif tg_table_name = 'course_materials' then
+    if new.file_type = 'Assignment' then
+      insert into public.notifications (user_id, title, body, link)
+      select p.id, 'New assignment: ' || new.title, coalesce('Due ' || to_char(new.due_date, 'DD Mon YYYY'), 'No due date'), '/e-learning'
+      from public.profiles p where p.active and p.role = 'student';
+    end if;
+  elsif tg_table_name = 'chat_messages' then
+    if new.channel like 'dm:%' then
+      other := nullif(trim(both ':' from replace(replace(new.channel, 'dm:', ''), new.sender_id::text, '')), '')::uuid;
+      perform public.notify_user(other, 'Message from ' || coalesce(new.sender_name, 'someone'), left(new.message, 140), '/chat');
+    end if;
+  elsif tg_table_name = 'password_reset_requests' then
+    insert into public.notifications (user_id, title, body, link)
+    select p.id, 'Password reset requested', new.email, '/admin' from public.profiles p where p.active and p.role in ('owner','administration');
+  elsif tg_table_name = 'profiles' then
+    if tg_op = 'INSERT' and new.pending then
+      insert into public.notifications (user_id, title, body, link)
+      select p.id, 'New account waiting for approval', new.full_name, '/admin' from public.profiles p where p.active and p.role in ('owner','administration');
+    end if;
+  end if;
+  return new;
+end $$;
+
+do $$
+declare r record;
+begin
+  for r in select * from (values
+    ('grades', 'after insert or update'), ('attendance', 'after insert or update'), ('announcements', 'after insert'),
+    ('leave_requests', 'after update'), ('course_materials', 'after insert'), ('chat_messages', 'after insert'),
+    ('password_reset_requests', 'after insert'), ('profiles', 'after insert')
+  ) as x(tbl, evt)
+  loop
+    execute format('drop trigger if exists notify_%s on public.%I', r.tbl, r.tbl);
+    execute format('create trigger notify_%s %s on public.%I for each row execute function public.on_notify_event()', r.tbl, r.evt, r.tbl);
+  end loop;
+end $$;
+
+do $$
+begin
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'notifications') then
+    alter publication supabase_realtime add table public.notifications;
+  end if;
+end $$;
+
+notify pgrst, 'reload schema';
+
+-- Older databases restricted roles to four values; allow the parent role too.
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check
+  check (role in ('owner', 'administration', 'teacher', 'student', 'parent'));
+notify pgrst, 'reload schema';
+
+-- Older databases made optional fields mandatory, which made saves fail silently
+-- (e.g. calendar events without a location). Relax them to match the app.
+do $$
+declare r record;
+begin
+  for r in select * from (values
+    ('invoices','description'), ('invoices','amount'),
+    ('lab_equipment','category'),
+    ('course_materials','file_type'), ('course_materials','size_mb'),
+    ('admissions','program'), ('admissions','status'), ('admissions','documents'),
+    ('registrar_records','major'),
+    ('maintenance_tickets','location'), ('maintenance_tickets','priority'),
+    ('campus_events','location'),
+    ('tasks','assignee'),
+    ('calendar_events','location'),
+    ('exams','exam_date'),
+    ('chat_messages','sender_name')
+  ) as x(tbl, col)
+  loop
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = r.tbl and column_name = r.col) then
+      execute format('alter table public.%I alter column %I drop not null', r.tbl, r.col);
+    end if;
+  end loop;
+end $$;
+notify pgrst, 'reload schema';

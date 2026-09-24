@@ -38,9 +38,17 @@ async function openAndVerify(page: Page, click: () => Promise<void>, original: B
   return url;
 }
 
+// The signed-in user's access token, read from the app's saved Supabase session.
+async function ownerToken(page: Page) {
+  return page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
+    return key ? (JSON.parse(localStorage.getItem(key)!).access_token as string) : "";
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   page.on("dialog", (d) => d.accept());
-  await login(page, owner.email, owner.password);
+  await login(page, owner);
 });
 
 test("E-Learning: lecture video (20 MB) uploads, plays back and matches byte-for-byte", async ({ page }) => {
@@ -117,8 +125,16 @@ test("Chat: file attachment uploads and opens intact", async ({ page }) => {
   await msg.locator("xpath=ancestor::div[contains(@class,'group')][1]").hover();
   await page.locator("div.group").filter({ hasText: fname }).locator("button").first().click();
   await expect(msg).toHaveCount(0);
-  // Deleting the message must delete the stored file too.
-  await expect.poll(async () => (await page.request.get(link)).status()).not.toBe(200);
+  // Deleting the message must delete the stored file too. (Old signed links can stay cached on the CDN for a
+  // short while, so check storage itself rather than the link.)
+  const storagePath = decodeURIComponent(new URL(link).pathname.split("/object/sign/chat-files/")[1]);
+  const [folder, storedName] = [storagePath.slice(0, storagePath.lastIndexOf("/")), storagePath.slice(storagePath.lastIndexOf("/") + 1)];
+  const res = await page.request.post(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/list/chat-files`, {
+    headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, Authorization: `Bearer ${await ownerToken(page)}` },
+    data: { prefix: folder, limit: 1000 },
+  });
+  const names = ((await res.json()) as { name: string }[]).map((f) => f.name);
+  expect(names, "file removed from storage").not.toContain(storedName);
 });
 
 test("Library: e-book uploads and the Read button opens it intact", async ({ page }) => {

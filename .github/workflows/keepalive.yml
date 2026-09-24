@@ -1,0 +1,21 @@
+# Supabase pauses free-plan projects after about a week without activity.
+# A tiny read every 3 days keeps the school's database awake.
+name: Keep database awake
+
+on:
+  schedule:
+    - cron: "17 6 */3 * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase
+        env:
+          URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/rest/v1/announcements?select=id&limit=1" -H "apikey: $KEY" -H "Authorization: Bearer $KEY")
+          echo "Supabase responded with HTTP $code"
+          test "$code" = "200"

@@ -61,7 +61,7 @@ export default function Announcements() {
           <form onSubmit={submit} className="space-y-4">
             <Field label="Title"><input required className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
             <Field label="Message"><textarea required rows={6} className={inputClass} value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} /></Field>
-            <div className="grid grid-cols-2 gap-4 items-end">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
               <Field label="Audience">
                 <select className={inputClass} value={form.audience} onChange={(e) => setForm({ ...form, audience: e.target.value })}>
                   {Object.entries(AUDIENCE).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
