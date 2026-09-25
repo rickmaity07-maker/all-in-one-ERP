@@ -37,8 +37,12 @@ export async function androidDevice() {
 export const adb = async (cmd: string) => (await (await androidDevice()).shell(cmd)).toString();
 
 export async function androidPage(): Promise<Page> {
-  if (appPage && !appPage.isClosed()) return appPage;
   const d = await androidDevice();
+  // Reuse the attached page only while the app process is still alive.
+  const alive = (await d.shell(`pidof ${ANDROID_PKG}`)).toString().trim() !== "";
+  if (appPage && !appPage.isClosed() && alive) return appPage;
+  if (appPage && !alive) console.warn("Android app process was not running; relaunching it.");
+  appPage = null;
   await d.shell(`am start -W -n ${ANDROID_PKG}/com.allinoneerp.app.MainActivity`);
   const webview = await d.webView({ pkg: ANDROID_PKG }, { timeout: 60_000 });
   appPage = await webview.page();

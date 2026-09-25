@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import GlobalSidebar from "../components/GlobalSidebar";
 import UpdateBanner from "../components/UpdateBanner";
+import ConnectionBanner from "../components/ConnectionBanner";
 import { Toaster } from "../components/ui";
 import { AuthGuard, SessionProvider } from "../lib/session";
 
@@ -30,6 +31,7 @@ export default function RootLayout({
             <span className="pointer-events-none">All-In-One ERP Workspace</span>
           </div>
 
+          <ConnectionBanner />
           <UpdateBanner />
 
           {/* MAIN APP CONTAINER */}

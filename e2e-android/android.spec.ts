@@ -178,7 +178,10 @@ test("offline: a clear message instead of a crash, and it recovers when back onl
   await page.waitForTimeout(3000);
   // The screens themselves are bundled in the app, so they still open; the data calls fail.
   await page.goto("/announcements");
-  await expect(page.locator(".fixed.bottom-6 .bg-red-50").first().or(page.getByText(/Failed to fetch|network|offline/i).first())).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/You're offline/)).toBeVisible({ timeout: 30_000 });
+  // Still signed in (a dropped connection must not look like a locked or unapproved account).
+  await expect(page.getByText(/waiting for an administrator|deactivated/i)).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Secure Sign In" })).toHaveCount(0);
   expect(await appInFront(), "app is still running").toBe(true);
   await adb("cmd connectivity airplane-mode disable");
   await page.waitForTimeout(5000);

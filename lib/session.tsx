@@ -22,6 +22,8 @@ type SessionState = {
   profile: Profile | null;
   role: Role;
   loading: boolean;
+  // True while the profile could not be loaded because the server is unreachable.
+  unreachable: boolean;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
 };
@@ -35,29 +37,59 @@ export const STAFF_ROLES: Role[] = ["owner", "administration", "teacher"];
 const PROFILE_COLUMNS = "id, full_name, role, active, pending, must_change_password";
 
 export const LOGIN_NOTICE_KEY = "erp_login_notice";
+const PROFILE_CACHE = "erp_profile_";
+
+// Last profile loaded for this user, so a dropped connection (common on phones) doesn't look like
+// a missing or unapproved account. Only the user's own name/role flags; the server still enforces access.
+const cachedProfile = (id: string): Profile | null => {
+  try {
+    return JSON.parse(localStorage.getItem(PROFILE_CACHE + id) ?? "null");
+  } catch {
+    return null;
+  }
+};
+const cacheProfile = (p: Profile) => {
+  try {
+    localStorage.setItem(PROFILE_CACHE + p.id, JSON.stringify({ ...p, email: undefined }));
+  } catch {}
+};
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [unreachable, setUnreachable] = useState(false);
+  const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Id of the user whose profile we want. Loads that finish for anyone else (e.g. a slow request
   // from before a log-out/log-in) are ignored so they can't overwrite the current profile.
   const wanted = useRef<string | null>(null);
 
-  const loadProfile = useCallback(async (u: User | null) => {
+  const loadProfile = useCallback(async function load(u: User | null): Promise<void> {
     wanted.current = u?.id ?? null;
     if (!u) {
       setProfile(null);
       return;
     }
-    const { data } = await supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", u.id).maybeSingle();
+    if (retry.current) clearTimeout(retry.current);
+    const { data, error } = await supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", u.id).maybeSingle();
     if (wanted.current !== u.id) return;
-    // The database trigger creates the profile on sign-up; until it exists treat the account as pending.
-    setProfile(
-      data
-        ? ({ ...(data as Profile), email: u.email } as Profile)
-        : { id: u.id, full_name: u.email?.split("@")[0] ?? "User", role: "student", email: u.email, active: false, pending: true }
-    );
+    if (error) {
+      // Network or server trouble: keep going with what we knew and try again shortly.
+      const cached = cachedProfile(u.id);
+      if (cached) setProfile({ ...cached, email: u.email });
+      setUnreachable(!cached);
+      retry.current = setTimeout(() => load(u), 5000);
+      return;
+    }
+    setUnreachable(false);
+    if (data) {
+      const p = { ...(data as Profile), email: u.email } as Profile;
+      cacheProfile(p);
+      setProfile(p);
+    } else {
+      // The database trigger creates the profile on sign-up; until it exists treat the account as pending.
+      setProfile({ id: u.id, full_name: u.email?.split("@")[0] ?? "User", role: "student", email: u.email, active: false, pending: true });
+    }
   }, []);
 
   const refresh = useCallback(async () => {
@@ -90,14 +122,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [loadProfile]);
 
   const signOut = useCallback(async () => {
+    const id = wanted.current;
     wanted.current = null;
+    if (retry.current) clearTimeout(retry.current);
+    try {
+      if (id) localStorage.removeItem(PROFILE_CACHE + id);
+    } catch {}
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
   }, []);
 
   return (
-    <SessionContext.Provider value={{ user, profile, role: profile?.role ?? "student", loading, refresh, signOut }}>
+    <SessionContext.Provider value={{ user, profile, role: profile?.role ?? "student", loading, unreachable, refresh, signOut }}>
       {children}
     </SessionContext.Provider>
   );
@@ -126,7 +163,7 @@ export function setLoginNotice(message: string) {
 // Sends signed-out visitors to the login screen, keeps pending/deactivated accounts out,
 // and forces a password change after an administrator reset.
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, profile, loading, signOut } = useSession();
+  const { user, profile, loading, unreachable, signOut } = useSession();
   const pathname = usePathname();
   const router = useRouter();
   // The login screen and the public credential checker need no account.
@@ -147,6 +184,13 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     } else if (mustChange && pathname !== "/settings") router.replace("/settings");
   }, [loading, user, blocked, mustChange, isLogin, pathname, profile?.pending, router, signOut]);
 
+  if (!isLogin && user && !profile && unreachable) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-6 text-center text-slate-500 font-semibold">
+        Can&apos;t reach the server. Check your internet connection — retrying automatically…
+      </div>
+    );
+  }
   // Wait for the profile too, so pages never render with a stale/default role.
   if (!isLogin && (loading || !user || !profile || profile.id !== user.id || blocked)) return null;
   if (!isLogin && mustChange && pathname !== "/settings") return null;

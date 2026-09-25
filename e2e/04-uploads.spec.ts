@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, request, type Page } from "@playwright/test";
 import { createHash, randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,12 +27,15 @@ const pdf = (label: string) =>
 async function openAndVerify(page: Page, click: () => Promise<void>, original: Buffer, mime: RegExp) {
   const url = await openedUrl(page, click);
   expect(url, "file opens from Supabase Storage with a signed link").toMatch(/supabase\.co\/storage\/v1\/object\/sign\//);
-  const res = await page.request.get(url);
+  // Fetched from the test machine (the Android app's WebView can't share its request context).
+  const api = await request.newContext();
+  const res = await api.get(url);
   expect(res.status()).toBe(200);
   expect(res.headers()["content-type"]).toMatch(mime);
   const body = await res.body();
   expect(body.length, "downloaded size matches upload").toBe(original.length);
   expect(sha(body), "downloaded bytes match upload exactly").toBe(sha(original));
+  await api.dispose();
   return url;
 }
 
