@@ -67,7 +67,11 @@ const FEATURES = [
   ["Finance", ["Invoices, overdue tracking, mark paid, printable invoices, CSV export", "Expenses & payroll, cash-flow overview", "Student accounts on an append-only double-entry ledger", "Fee schedules: per-credit tuition, full-time cap, residency pricing, automatic charge on registration and refund within add/drop", "Payments, adjustments, financial aid (offer → accept → disburse), instalment plans, automatic holds for overdue balances", "Printable statements; students and parents see their own account"]],
   ["Campus", ["Rooms & assets: overlap-free room booking, asset register, maintenance log, certification expiry", "Housing: rooms, check-in, meal plans, maintenance tickets", "MakerSpace & lab equipment booking with clash prevention", "Library with e-books, borrowing and returns", "Student life: events with RSVP capacity, clubs", "Logistics & transport: routes, seat reservations, delays, manifests", "Careers & portfolio: postings, applications, stages", "Task management"]],
   ["Insight & integration", ["Retention-risk scores (attendance, grades, missing work, holds) with at-risk alerts", "Admissions forecast per programme, learned from past decisions", "Event log and outgoing webhooks for every business event", "REST API documentation (same security rules as the app)", "Nightly jobs (risk scores, holds) and nightly backups"]],
-  ["Apps & delivery", ["Windows desktop app with signed online updates (one-click update & restart)", "Web version on GitHub Pages that works on phones", "Android app (APK) with Android print dialog, saving to Downloads, back button, keyboard-aware layout and in-app update check", "Strict content-security policy; secrets never shipped in the apps"]],
+  ["Apps & delivery", ["Windows desktop app with signed online updates (one-click update & restart)", "Web version on GitHub Pages that works on phones", "Android app (APK) with Android print dialog, saving to Downloads, back button, keyboard-aware layout and in-app update check", "Strict content-security policy; secrets never shipped in the apps",
+    "Offline notice on every platform; a dropped connection never signs you out",
+    "Sign-in saved to disk immediately, so closing the app right after signing in keeps you signed in",
+    "Android: Back steps through pages then backgrounds the app, rotation and font-size changes keep your place, keyboard never covers the field",
+    "One shared live database: a change on the website or Windows app appears on Android and vice versa"]],
 ];
 
 // ---------- HTML ----------
@@ -124,6 +128,15 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><title>All-In-One
   on the computer in Microsoft Edge against the app, on Android inside the installed app (Playwright attached to the app's WebView over adb).
   The database tests exercise the security rules and business logic both apps rely on.</p>
 </div>
+<section class="page"><h2>How the tests were run</h2>
+<table><tbody>
+<tr><th>Computer</th><td>Windows 10 Pro, Microsoft Edge driven by Playwright against the app (same code the Windows app ships). The installed Windows app was also updated online from the previous release and checked (update test).</td></tr>
+<tr><th>Android</th><td>The real Android app (APK) installed on Android 15 emulators — a Pixel 6 phone and a Pixel C tablet in landscape — with Playwright attached to the app's WebView over adb. Hardware keys, rotation, keyboard, airplane mode, font size, file picker, print dialog, Downloads, browser hand-off and APK installs are driven through adb. Runs on this PC (Intel VT-x + Windows Hypervisor Platform) and on GitHub Actions.</td></tr>
+<tr><th>Same system</th><td>Both apps share one code base and one Supabase database; cross-device tests change data in one (website/desktop) and check it in the other (Android), in both directions, and a live chat runs between a browser and the phone.</td></tr>
+<tr><th>Server</th><td>Database security rules and business logic tested on a local Postgres (PGlite) with the production schema.</td></tr>
+<tr><th>Security</th><td>Row-level security for every table and role, private data isolation, storage access, signed updates (desktop minisign, Android APK signature — a copy signed with another key is refused), least-privilege Android permissions, dependency audit (npm audit: 0 vulnerabilities), strict content-security policy.</td></tr>
+<tr><th>Known framework behaviour</th><td>On Android, Tauri (the app framework) can log "reading 'runCallback'" in a page that is being unloaded when a test performs a full page reload while a native call is in flight. The new page is unaffected and the app itself navigates without full reloads; the Android test harness ignores only this message.</td></tr>
+</tbody></table></section>
 <section class="page"><h2>Features</h2><div class="cols">${FEATURES.map(([g, items]) => `<div><h3>${esc(g)}</h3><ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>`).join("")}</div></section>
 ${detail}
 </body></html>`;

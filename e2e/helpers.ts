@@ -46,7 +46,9 @@ export async function androidPage(): Promise<Page> {
   appPage = null;
   await d.shell(`am start -W -n ${ANDROID_PKG}/com.allinoneerp.app.MainActivity`);
   const webview = await d.webView({ pkg: ANDROID_PKG }, { timeout: 60_000 });
-  appPage = await webview.page();
+  // The app can briefly own a second, hidden WebView (the print helper); drive the one showing the app.
+  const first = await webview.page();
+  appPage = first.context().pages().find((p) => p.url().startsWith(ANDROID_ORIGIN)) ?? first;
   appPid = (await d.shell(`pidof ${ANDROID_PKG}`)).toString().trim();
   const goto = appPage.goto.bind(appPage);
   appPage.goto = (url, options) => goto(url.startsWith("/") ? ANDROID_ORIGIN + url : url, options);
@@ -181,7 +183,8 @@ export function watchForErrors(page: Page) {
     problems.push(`page error: ${e.message}`);
   });
   page.on("console", (m) => {
-    if (m.type() === "error" && !/favicon|Download the React DevTools|\[Fast Refresh\]/i.test(m.text())) problems.push(`console: ${m.text()}`);
+    // ERR_NETWORK_CHANGED: the device's network reconnected (emulators do this); not an app error.
+    if (m.type() === "error" && !/favicon|Download the React DevTools|\[Fast Refresh\]|ERR_NETWORK_CHANGED/i.test(m.text())) problems.push(`console: ${m.text()}`);
   });
   return problems;
 }

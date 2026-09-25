@@ -7,7 +7,13 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.CancellationSignal
+import android.os.ParcelFileDescriptor
+import android.print.PageRange
 import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
+import android.print.PrintDocumentAdapter.LayoutResultCallback
+import android.print.PrintDocumentAdapter.WriteResultCallback
 import android.print.PrintManager
 import android.provider.MediaStore
 import android.util.Base64
@@ -77,7 +83,23 @@ class MainActivity : TauriActivity() {
         view.webViewClient = object : WebViewClient() {
           override fun onPageFinished(page: WebView, url: String?) {
             val manager = getSystemService(PRINT_SERVICE) as PrintManager
-            manager.print(title, page.createPrintDocumentAdapter(title), PrintAttributes.Builder().build())
+            val inner = page.createPrintDocumentAdapter(title)
+            // Hand Android the document, then throw the helper view away once printing is done or cancelled.
+            val adapter = object : PrintDocumentAdapter() {
+              override fun onStart() = inner.onStart()
+              override fun onLayout(old: PrintAttributes?, new: PrintAttributes, signal: CancellationSignal?, cb: LayoutResultCallback, extras: Bundle?) =
+                inner.onLayout(old, new, signal, cb, extras)
+              override fun onWrite(pages: Array<out PageRange>, dest: ParcelFileDescriptor, signal: CancellationSignal?, cb: WriteResultCallback) =
+                inner.onWrite(pages, dest, signal, cb)
+              override fun onFinish() {
+                inner.onFinish()
+                runOnUiThread {
+                  if (printView === page) printView = null
+                  page.destroy()
+                }
+              }
+            }
+            manager.print(title, adapter, PrintAttributes.Builder().build())
           }
         }
         view.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
