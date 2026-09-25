@@ -48,10 +48,13 @@ jobs:
       - run: npm ci
       - id: v
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Android NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.14206865" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
 
       - name: Release APK (signed, real phones + emulators)
         env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/erp-release.jks"
@@ -61,8 +64,6 @@ jobs:
           cp src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk "dist-android/all-in-one-erp-${{ steps.v.outputs.version }}.apk"
 
       - name: Test APK (debug build numbered 0.0.1 so the in-app update check has something to offer)
-        env:
-          NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
         run: |
           npx tauri android build --debug --apk --target x86_64 --config '{"version":"0.0.1"}'
           cp src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk dist-android/test-debug.apk
