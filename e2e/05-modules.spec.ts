@@ -77,7 +77,11 @@ test("forgot password → admin sets a temporary one → user must choose a new 
   await page.goto("/");
   await page.getByRole("button", { name: /Forgot password/ }).click();
   await page.getByPlaceholder("Email Address").fill(applicant.email);
-  await page.getByRole("button", { name: "Send Reset Request" }).click();
+  const [resp] = await Promise.all([
+    page.waitForResponse((r) => r.url().includes("rpc/request_password_reset")),
+    page.getByRole("button", { name: "Send Reset Request" }).click(),
+  ]);
+  expect(resp.status(), await resp.text()).toBe(204);
   await expect(page.getByText(/administrator will set a temporary password/i)).toBeVisible();
 
   await as(page, owner);

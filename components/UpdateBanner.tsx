@@ -14,10 +14,13 @@ export default function UpdateBanner() {
   const [dismissed, setDismissed] = useState<string | null>(null);
 
   useEffect(() => {
-    const first = setTimeout(checkForUpdate, 3000);
-    const timer = setInterval(checkForUpdate, CHECK_EVERY_MS);
+    const first = setTimeout(() => checkForUpdate(), 3000);
+    // On Android the native start-up check may still be running at 3 s; look again a bit later.
+    const second = isAndroidApp() ? setTimeout(() => checkForUpdate(), 20_000) : undefined;
+    const timer = setInterval(() => checkForUpdate(), CHECK_EVERY_MS);
     return () => {
       clearTimeout(first);
+      clearTimeout(second);
       clearInterval(timer);
     };
   }, []);

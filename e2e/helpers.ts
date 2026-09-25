@@ -208,8 +208,8 @@ export async function logout(page: Page) {
   await expect(page).toHaveURL(/\/$/);
 }
 
-export async function expectToast(page: Page, text: string | RegExp) {
-  await expect(page.locator(".fixed.bottom-6").getByText(text).last()).toBeVisible();
+export async function expectToast(page: Page, text: string | RegExp, timeout?: number) {
+  await expect(page.locator(".fixed.bottom-6").getByText(text).last()).toBeVisible({ timeout });
 }
 
 export async function expectNoErrorToast(page: Page) {

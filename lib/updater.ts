@@ -4,11 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { isAndroidApp, isTauri, openExternal } from "./utils";
 
-// Android updates are a new APK from the latest GitHub release (the desktop updater does not run on phones).
-// latest.json is the file the desktop updater reads; fetched through the app (plugin-http), so there is
-// no browser CORS and no GitHub API rate limit.
-const REPO = "https://github.com/rickmaity07-maker/all-in-one-ERP";
-const LATEST_JSON = `${REPO}/releases/latest/download/latest.json`;
+// Android updates are a new APK from the latest GitHub release (the desktop updater does not run on
+// phones). The app's native side checks GitHub at start-up (src-tauri/src/lib.rs); here we only read
+// its stored answer, or ask it to check again when the person presses "Check for updates".
+type Latest = { version: string; apk_url: string | null; notes: string | null };
 let apkUrl: string | null = null;
 
 const newer = (a: string, b: string) => {
@@ -38,7 +37,7 @@ const setStatus = (s: UpdateStatus) => {
   listeners.forEach((l) => l(s));
 };
 
-export async function checkForUpdate(): Promise<UpdateStatus> {
+export async function checkForUpdate(manual = false): Promise<UpdateStatus> {
   if (!isTauri()) {
     setStatus({ state: "unsupported" });
     return status;
@@ -47,19 +46,16 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
   setStatus({ state: "checking" });
   if (isAndroidApp()) {
     try {
-      const { fetch: nativeFetch } = await import("@tauri-apps/plugin-http");
-      const res = await nativeFetch(LATEST_JSON);
-      if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
-      const rel = await res.json();
-      const latest = String(rel.version ?? "").replace(/^v/, "");
-      apkUrl = null;
-      if (latest && newer(latest, await getAppVersion())) {
-        // The APK is attached a few minutes after the desktop build; only offer it once it exists.
-        const url = `${REPO}/releases/download/v${latest}/all-in-one-erp-${latest}.apk`;
-        const head = await nativeFetch(url, { method: "HEAD" });
-        if (head.ok) apkUrl = url;
+      const { invoke } = await import("@tauri-apps/api/core");
+      let latest: Latest | null;
+      if (manual) latest = await invoke<Latest>("android_check_release");
+      else {
+        const stored = await invoke<{ Ok?: Latest; Err?: string } | null>("android_latest_release");
+        if (stored?.Err) throw new Error(stored.Err);
+        latest = stored?.Ok ?? null;
       }
-      setStatus(apkUrl ? { state: "available", version: latest, notes: rel.notes ?? undefined } : { state: "none" });
+      apkUrl = latest?.apk_url && newer(latest.version, await getAppVersion()) ? latest.apk_url : null;
+      setStatus(apkUrl && latest ? { state: "available", version: latest.version, notes: latest.notes ?? undefined } : { state: "none" });
     } catch (e) {
       setStatus({ state: "error", message: e instanceof Error ? e.message : String(e) });
     }
@@ -121,7 +117,7 @@ export function useUpdater() {
       listeners.delete(setS);
     };
   }, []);
-  const check = useCallback(() => checkForUpdate(), []);
+  const check = useCallback(() => checkForUpdate(true), []);
   const install = useCallback(() => installUpdate(), []);
   return { status: s, check, install };
 }

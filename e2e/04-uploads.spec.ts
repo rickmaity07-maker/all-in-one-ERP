@@ -61,7 +61,8 @@ test("E-Learning: lecture video (20 MB) uploads, plays back and matches byte-for
   await page.locator("form select").selectOption("Video");
   await page.locator('form input[type="file"]').setInputFiles({ name: "lecture-week5.mp4", mimeType: "video/mp4", buffer: video });
   await page.getByRole("button", { name: "Publish" }).click();
-  await expectToast(page, "Resource published.");
+  // Large files over a phone-speed connection can take a while.
+  await expectToast(page, "Resource published.", 120_000);
   const item = page.locator("div.rounded-2xl").filter({ hasText: title });
   await expect(item.getByText("20 MB")).toBeVisible();
   await openAndVerify(page, () => item.locator("button").first().click(), video, /video\/mp4/);
@@ -78,7 +79,8 @@ test("E-Learning: PDF study material uploads and downloads intact", async ({ pag
   await page.locator("form select").selectOption("PDF");
   await page.locator('form input[type="file"]').setInputFiles({ name: "week5-notes.pdf", mimeType: "application/pdf", buffer: file });
   await page.getByRole("button", { name: "Publish" }).click();
-  await expectToast(page, "Resource published.");
+  // Large files over a phone-speed connection can take a while.
+  await expectToast(page, "Resource published.", 120_000);
   const item = page.locator("div.rounded-2xl").filter({ hasText: title });
   await openAndVerify(page, () => item.getByTitle("Download").click(), file, /application\/pdf/);
 });
@@ -109,7 +111,7 @@ test("Admissions: applicant documents upload and open intact", async ({ page }) 
   await expectToast(page, "Application added.");
   await page.getByRole("button", { name, exact: true }).click();
   await page.locator('input[type="file"][multiple]').setInputFiles({ name: "passport.pdf", mimeType: "application/pdf", buffer: passport });
-  await expectToast(page, /1 document\(s\) uploaded/);
+  await expectToast(page, /1 document\(s\) uploaded/, 60_000);
   await openAndVerify(page, () => page.getByRole("button", { name: "passport.pdf" }).click(), passport, /application\/pdf/);
   await page.getByRole("button", { name: "Delete application" }).click();
   await expectToast(page, "Application deleted.");
