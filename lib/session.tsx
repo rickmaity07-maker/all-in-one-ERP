@@ -164,7 +164,8 @@ export function setLoginNotice(message: string) {
 // and forces a password change after an administrator reset.
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, profile, loading, unreachable, signOut } = useSession();
-  const pathname = usePathname();
+  // The web version uses folder-style URLs ("/settings/"); compare paths without the trailing slash.
+  const pathname = (usePathname() ?? "/").replace(/(.)\/+$/, "$1");
   const router = useRouter();
   // The login screen and the public credential checker need no account.
   const isLogin = pathname === "/" || pathname.startsWith("/verify");

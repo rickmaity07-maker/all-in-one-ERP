@@ -53,7 +53,8 @@ const NAV: NavItem[] = [
 ];
 
 export default function GlobalSidebar() {
-  const pathname = usePathname();
+  // The web version uses folder-style URLs ("/settings/"); compare paths without the trailing slash.
+  const pathname = (usePathname() ?? "/").replace(/(.)\/+$/, "$1");
   const router = useRouter();
   const { profile, role, signOut } = useSession();
   const [isExpanded, setIsExpanded] = useState(false);
