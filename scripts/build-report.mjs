@@ -68,6 +68,13 @@ const FEATURES = [
   ["Students & records", ["Registrar (student information system): records, courses, transcripts, probation, counselling, mail-delivery requests", "Admissions CRM: pipeline, document upload & verification, Enrolled / Declined outcomes", "Parent portal: children's grades, attendance, invoices, absence reports", "Leave & absence requests with approval", "Micro-credentials / badges with certificates and a public verification page"]],
   ["Finance", ["Invoices, overdue tracking, mark paid, printable invoices, CSV export", "Expenses & payroll, cash-flow overview", "Student accounts on an append-only double-entry ledger", "Fee schedules: per-credit tuition, full-time cap, residency pricing, automatic charge on registration and refund within add/drop", "Payments, adjustments, financial aid (offer → accept → disburse), instalment plans, automatic holds for overdue balances", "Printable statements; students and parents see their own account"]],
   ["Campus", ["Rooms & assets: overlap-free room booking, asset register, maintenance log, certification expiry", "Housing: rooms, check-in, meal plans, maintenance tickets", "MakerSpace & lab equipment booking with clash prevention", "Library with e-books, borrowing and returns", "Student life: events with RSVP capacity, clubs", "Logistics & transport: routes, seat reservations, delays, manifests", "Careers & portfolio: postings, applications, stages", "Task management"]],
+  ["Institutional operations", ["Research & grants: proposals, awards with sponsor rules (allowed categories, caps, grant period, no overspending), balances, effort certification",
+    "Faculty lifecycle: dossiers and publications, four-stage tenure review (department → college → provost → board), sabbaticals with eligibility and overlap checks, pay split across departments and grants",
+    "Advancement: alumni role and portal, campaigns with live progress, pledges paid in instalments with receipts, donor engagement scores",
+    "Procurement: departments and budgets, purchase requests with budget check and amount-based approval routing (head → finance → owner), full approval history",
+    "Compliance & accreditation: versioned institutional documents, expiry warnings, statutory reports (enrolment, finance, staffing, research) with print and CSV",
+    "Lab hardware API: RFID door readers, 3D printers and sensors report with their own key; doors open for staff or during a booking; faults put equipment into maintenance",
+    "Live presence in chat (who is online now)"]],
   ["Insight & integration", ["Retention-risk scores (attendance, grades, missing work, holds) with at-risk alerts", "Admissions forecast per programme, learned from past decisions", "Event log and outgoing webhooks for every business event", "REST API documentation (same security rules as the app)", "Nightly jobs (risk scores, holds) and nightly backups"]],
   ["Apps & delivery", ["Windows desktop app with signed online updates (one-click update & restart)", "Web version on GitHub Pages that works on phones", "Android app (APK) with Android print dialog, saving to Downloads, back button, keyboard-aware layout and in-app update check", "Strict content-security policy; secrets never shipped in the apps",
     "Offline notice on every platform; a dropped connection never signs you out",
@@ -137,6 +144,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><title>All-In-One
 <tr><th>Same system</th><td>Both apps share one code base and one Supabase database; cross-device tests change data in one (website/desktop) and check it in the other (Android), in both directions, and a live chat runs between a browser and the phone.</td></tr>
 <tr><th>Server</th><td>Database security rules and business logic tested on a local Postgres (PGlite) with the production schema.</td></tr>
 <tr><th>Security</th><td>Row-level security for every table and role, private data isolation, storage access, signed updates (desktop minisign, Android APK signature — a copy signed with another key is refused), least-privilege Android permissions, dependency audit (npm audit: 0 vulnerabilities), strict content-security policy.</td></tr>
+<tr><th>Deployment note</th><td>Supabase limits password sign-ins per internet address (default about 30 per 5 minutes). A school network where everyone shares one address may need this raised under Authentication → Rate Limits.</td></tr>
 <tr><th>Known framework behaviour</th><td>On Android, Tauri (the app framework) can log "reading 'runCallback'" in a page that is being unloaded when a test performs a full page reload while a native call is in flight. The new page is unaffected and the app itself navigates without full reloads; the Android test harness ignores only this message.</td></tr>
 </tbody></table></section>
 <section class="page"><h2>Bugs found by the tests and fixed</h2>
@@ -158,6 +166,8 @@ ${[
   ["Android", "Printing and CSV downloads unsupported by the WebView", "Native bridge: Android print dialog, Downloads folder"],
   ["Android", "Update check could hit GitHub API limits", "Checked natively from the release's latest.json"],
   ["Security", "High-severity advisory in an image library (sharp)", "Dependency updated; npm audit reports 0 vulnerabilities"],
+  ["Computer", "Notification panel was hidden behind the sidebar's edge on wide screens", "Panel positioned on screen next to the bell; test checks it is really visible"],
+  ["All", "Sign-in failures showed the cryptic \"Failed to fetch\"", "Clear message about the connection or too many sign-ins on the network"],
 ].map(([w, p, f]) => `<tr><td>${w}</td><td>${p}</td><td>${f}</td></tr>`).join("")}
 </tbody></table></section>
 <section class="page"><h2>Features</h2><div class="cols">${FEATURES.map(([g, items]) => `<div><h3>${esc(g)}</h3><ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>`).join("")}</div></section>

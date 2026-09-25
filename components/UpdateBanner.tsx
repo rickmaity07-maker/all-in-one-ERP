@@ -27,7 +27,7 @@ export default function UpdateBanner() {
 
   if (status.state === "available" && dismissed !== status.version) {
     return (
-      <div className="bg-emerald-500 text-white text-sm font-semibold flex flex-wrap items-center justify-center gap-x-4 gap-y-2 px-4 py-2 shrink-0 text-center">
+      <div role="status" className="fixed z-40 left-4 right-4 bottom-4 md:left-24 md:right-auto md:max-w-sm rounded-2xl shadow-2xl bg-emerald-600 text-white text-sm font-semibold flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
         <RefreshCw size={16} />
         <span>Version {status.version} is available with new features and fixes.</span>
         <button onClick={install} className="flex items-center gap-1.5 bg-white text-emerald-700 px-3 py-1 rounded-lg font-bold hover:bg-emerald-50">
@@ -42,7 +42,7 @@ export default function UpdateBanner() {
 
   if (status.state === "apk-opened") {
     return (
-      <div className="bg-emerald-600 text-white text-sm font-semibold flex items-center justify-center gap-3 px-4 py-2 shrink-0 text-center">
+      <div role="status" className="fixed z-40 left-4 right-4 bottom-4 md:left-24 md:right-auto md:max-w-sm rounded-2xl shadow-2xl bg-emerald-700 text-white text-sm font-semibold flex items-center gap-3 px-4 py-3">
         <Download size={16} className="shrink-0" /> Version {status.version} is downloading in your browser — open the downloaded file to install it.
       </div>
     );
@@ -50,7 +50,7 @@ export default function UpdateBanner() {
 
   if (status.state === "downloading" || status.state === "installing") {
     return (
-      <div className="bg-emerald-600 text-white text-sm font-semibold flex items-center justify-center gap-3 px-4 py-2 shrink-0">
+      <div role="status" className="fixed z-40 left-4 right-4 bottom-4 md:left-24 md:right-auto md:max-w-sm rounded-2xl shadow-2xl bg-emerald-700 text-white text-sm font-semibold flex items-center gap-3 px-4 py-3">
         <Loader2 size={16} className="animate-spin" />
         {status.state === "downloading" ? `Downloading update… ${status.percent}%` : "Installing update — the app will restart automatically."}
       </div>
