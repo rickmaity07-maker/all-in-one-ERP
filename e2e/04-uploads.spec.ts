@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test, hasOwner, owner, login, RUN, expectToast } from "./helpers";
+import { test, hasOwner, owner, login, RUN, expectToast, openedUrl } from "./helpers";
 
 // Every upload button: upload through the UI, open it again through the app's own
 // Open / Play / Read button, download it, and compare the bytes with what we sent.
@@ -25,8 +25,7 @@ const pdf = (label: string) =>
 // Clicks something that opens a stored file, grabs the signed URL from the new tab,
 // downloads it and checks size, type and exact contents.
 async function openAndVerify(page: Page, click: () => Promise<void>, original: Buffer, mime: RegExp) {
-  const [tab] = await Promise.all([page.context().waitForEvent("page"), click()]);
-  const url = tab.url() === "about:blank" ? (await tab.waitForURL(/supabase\.co/), tab.url()) : tab.url();
+  const url = await openedUrl(page, click);
   expect(url, "file opens from Supabase Storage with a signed link").toMatch(/supabase\.co\/storage\/v1\/object\/sign\//);
   const res = await page.request.get(url);
   expect(res.status()).toBe(200);
@@ -34,7 +33,6 @@ async function openAndVerify(page: Page, click: () => Promise<void>, original: B
   const body = await res.body();
   expect(body.length, "downloaded size matches upload").toBe(original.length);
   expect(sha(body), "downloaded bytes match upload exactly").toBe(sha(original));
-  await tab.close();
   return url;
 }
 

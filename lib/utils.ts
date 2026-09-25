@@ -5,6 +5,20 @@ export type Row = Record<string, any>;
 
 export const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+// Native helpers added by the Android app (src-tauri/gen/android/.../MainActivity.kt): the Android
+// WebView cannot print or save blob downloads by itself.
+type AndroidBridge = { print(html: string, title: string): void; saveFile(name: string, mime: string, base64: string): string };
+export const androidBridge = (): AndroidBridge | null =>
+  typeof window !== "undefined" ? ((window as unknown as { AndroidBridge?: AndroidBridge }).AndroidBridge ?? null) : null;
+export const isAndroidApp = () => isTauri() && typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+
+const toBase64 = (text: string) => {
+  const bytes = new TextEncoder().encode(text);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+};
+
 export const money = (n: number | string | null | undefined) => {
   const v = Number(n || 0);
   return `${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -42,6 +56,12 @@ export function downloadCsv(filename: string, rows: Row[], columns: { key: strin
     return `"${t.replace(/"/g, '""')}"`;
   };
   const csv = [columns.map((c) => cell(c.label)).join(","), ...rows.map((r) => columns.map((c) => cell(r[c.key])).join(","))].join("\r\n");
+  const android = androidBridge();
+  if (android) {
+    // BOM so spreadsheet apps on the phone read UTF-8 names correctly.
+    android.saveFile(filename, "text/csv", toBase64("﻿" + csv));
+    return;
+  }
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const a = document.createElement("a");
   a.href = url;
@@ -55,6 +75,21 @@ export function downloadCsv(filename: string, rows: Row[], columns: { key: strin
 // Prints a standalone HTML document (invoices, transcripts) through a hidden iframe.
 // The system print dialog also offers "Save as PDF".
 export function printDocument(title: string, bodyHtml: string) {
+  const html = `<!doctype html><html><head><title>${escapeHtml(title)}</title><style>
+    body{font-family:Segoe UI,Arial,sans-serif;color:#1e293b;margin:40px}
+    h1{font-size:24px;margin:0 0 4px} h2{font-size:16px;margin:24px 0 8px;color:#475569}
+    .muted{color:#64748b;font-size:12px} table{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}
+    th,td{text-align:left;padding:8px;border-bottom:1px solid #e2e8f0} th{background:#f8fafc}
+    .right{text-align:right} .total{font-size:18px;font-weight:700}
+    .page{page-break-after:always;break-after:page} .page:last-child{page-break-after:auto;break-after:auto}
+    .brand{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #6441A5;padding-bottom:16px;margin-bottom:24px}
+  </style></head><body>${bodyHtml}</body></html>`;
+  const android = androidBridge();
+  if (android) {
+    // Android's own print dialog (printers and "Save as PDF").
+    android.print(html, title);
+    return;
+  }
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
   iframe.style.width = "0";
@@ -63,15 +98,7 @@ export function printDocument(title: string, bodyHtml: string) {
   document.body.appendChild(iframe);
   const doc = iframe.contentDocument!;
   doc.open();
-  doc.write(`<!doctype html><html><head><title>${escapeHtml(title)}</title><style>
-    body{font-family:Segoe UI,Arial,sans-serif;color:#1e293b;margin:40px}
-    h1{font-size:24px;margin:0 0 4px} h2{font-size:16px;margin:24px 0 8px;color:#475569}
-    .muted{color:#64748b;font-size:12px} table{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}
-    th,td{text-align:left;padding:8px;border-bottom:1px solid #e2e8f0} th{background:#f8fafc}
-    .right{text-align:right} .total{font-size:18px;font-weight:700}
-    .page{page-break-after:always;break-after:page} .page:last-child{page-break-after:auto;break-after:auto}
-    .brand{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #6441A5;padding-bottom:16px;margin-bottom:24px}
-  </style></head><body>${bodyHtml}</body></html>`);
+  doc.write(html);
   doc.close();
   setTimeout(() => {
     iframe.contentWindow?.focus();

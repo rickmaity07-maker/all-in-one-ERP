@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { useSession } from "@/lib/session";
 import { getAppVersion, useUpdater } from "@/lib/updater";
 import { Card, Field, SubmitButton, inputClass, toast } from "@/components/ui";
-import { errorMessage } from "@/lib/utils";
+import { errorMessage, isAndroidApp } from "@/lib/utils";
 import PrivateInfo from "@/components/PrivateInfo";
 
 export default function SettingsPage() {
@@ -76,6 +76,7 @@ export default function SettingsPage() {
                 {status.state === "available" && <span className="text-indigo-600">Version {status.version} is ready to install.</span>}
                 {status.state === "downloading" && <span className="text-indigo-600">Downloading… {status.percent}%</span>}
                 {status.state === "installing" && <span className="text-indigo-600">Installing — the app will restart.</span>}
+                {status.state === "apk-opened" && <span className="text-indigo-600">Version {status.version} is downloading in your browser — open the file to install it.</span>}
                 {status.state === "error" && <span className="text-red-600 flex items-center gap-2"><AlertCircle size={14} /> Update check failed: {status.message}</span>}
                 {status.state === "unsupported" && <span className="text-slate-500">Automatic updates are available in the desktop app.</span>}
               </div>
@@ -86,7 +87,7 @@ export default function SettingsPage() {
             <div className="flex flex-col gap-2 shrink-0">
               {status.state === "available" ? (
                 <button onClick={install} className="flex items-center gap-2 bg-emerald-500 text-white px-6 py-3 rounded-xl text-sm font-bold shadow-md hover:bg-emerald-600">
-                  <Download size={16} /> Update &amp; restart
+                  <Download size={16} /> {isAndroidApp() ? "Download update" : <>Update &amp; restart</>}
                 </button>
               ) : (
                 <button

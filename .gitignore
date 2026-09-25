@@ -52,3 +52,7 @@ next-env.d.ts
 # test output
 /test-results
 /playwright-report
+
+# Android test output
+playwright-report-android-*/
+dist-android/

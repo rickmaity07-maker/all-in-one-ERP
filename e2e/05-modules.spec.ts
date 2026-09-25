@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { test, hasOwner, owner, login, logout, inviteUser, testUser, RUN, expectToast, watchForErrors, capturePrints, printedDocuments, type TestUser } from "./helpers";
+import { test, hasOwner, owner, login, logout, inviteUser, testUser, RUN, expectToast, watchForErrors, capturePrints, printedDocuments, exportCsv, openedUrl, type TestUser } from "./helpers";
 
 // Click-tests every module end to end, from the staff side and the student/parent side.
 test.describe.configure({ mode: "serial" });
@@ -105,9 +105,8 @@ test("admin: role change, revoke/restore, CSV export, audit log", async ({ page 
   await expectToast(page, "Access revoked.");
   await row(page, applicant.name).getByRole("button", { name: /Restore Access/ }).click();
   await expectToast(page, "Access restored.");
-  const [dl] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Export CSV" }).click()]);
-  const csv = await (await dl.createReadStream()).toArray().then((c) => Buffer.concat(c).toString());
-  expect(csv).toContain(applicant.email);
+  const csv = await exportCsv(page, () => page.getByRole("button", { name: "Export CSV" }).click());
+  expect(csv.text).toContain(applicant.email);
   await tab(page, "Security Logs");
   await expect(page.getByText("profiles").first()).toBeVisible();
 });
@@ -136,8 +135,9 @@ test("finance: invoice, overdue, mark paid, print, CSV, expenses, cash flow", as
   expect(printed.at(-1)).toContain("$1,200.00");
   await row(page, tag("E2E tuition")).getByRole("button", { name: "Mark Paid" }).click();
   await expectToast(page, "Marked as paid.");
-  const [dl] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Export CSV" }).click()]);
-  expect(dl.suggestedFilename()).toBe("invoices.csv");
+  const csv = await exportCsv(page, () => page.getByRole("button", { name: "Export CSV" }).click());
+  expect(csv.name).toBe("invoices.csv");
+  expect(csv.text).toContain(tag("E2E tuition"));
 
   await tab(page, "Expenses & Payroll");
   await page.getByRole("button", { name: "Record Expense" }).click();
@@ -610,9 +610,7 @@ test("e-learning: lecture added as a YouTube link opens the link", async ({ page
   await expectToast(page, "Resource published.");
   const item = page.locator("div.rounded-2xl").filter({ hasText: title });
   await expect(item.getByText("Link")).toBeVisible();
-  const [tabPage] = await Promise.all([page.context().waitForEvent("page"), item.locator("button").first().click()]);
-  await expect.poll(() => tabPage.url()).toContain("youtube.com");
-  await tabPage.close();
+  expect(await openedUrl(page, () => item.locator("button").first().click())).toContain("youtube.com");
   await item.locator("button").last().click({ force: true });
   await expectToast(page, "Resource deleted.");
 });

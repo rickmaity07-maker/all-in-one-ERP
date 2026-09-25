@@ -1,4 +1,4 @@
-import { test as base, expect, type Page } from "@playwright/test";
+import { test as base, expect, _android, type Page, type AndroidDevice } from "@playwright/test";
 import { readFileSync, existsSync } from "node:fs";
 
 // Load .env.local so tests see the same settings as the app (Playwright doesn't do this itself).
@@ -20,12 +20,116 @@ export function withBasePath(page: Page) {
   return page;
 }
 
-// Use this "test" in specs so every page understands the base path.
+// ---------- Android app ----------
+// E2E_ANDROID_PKG=com.allinoneerp.app(.debug) runs the same specs inside the installed Android app:
+// Playwright attaches to the app's WebView over adb instead of launching a browser.
+export const ANDROID_PKG = process.env.E2E_ANDROID_PKG ?? "";
+export const onAndroid = Boolean(ANDROID_PKG);
+const ANDROID_ORIGIN = process.env.E2E_ANDROID_ORIGIN ?? "http://tauri.localhost";
+
+let device: AndroidDevice | null = null;
+let appPage: Page | null = null;
+export async function androidDevice() {
+  if (!device) [device] = await _android.devices();
+  if (!device) throw new Error("No Android device/emulator found (adb devices).");
+  return device;
+}
+export const adb = async (cmd: string) => (await (await androidDevice()).shell(cmd)).toString();
+
+export async function androidPage(): Promise<Page> {
+  if (appPage && !appPage.isClosed()) return appPage;
+  const d = await androidDevice();
+  await d.shell(`am start -W -n ${ANDROID_PKG}/com.allinoneerp.app.MainActivity`);
+  const webview = await d.webView({ pkg: ANDROID_PKG }, { timeout: 60_000 });
+  appPage = await webview.page();
+  const goto = appPage.goto.bind(appPage);
+  appPage.goto = (url, options) => goto(url.startsWith("/") ? ANDROID_ORIGIN + url : url, options);
+  // Record URLs the app hands to the system (openUrl → browser), so tests can check what was opened.
+  await appPage.addInitScript(() => {
+    const w = window as unknown as { __TAURI_INTERNALS__?: { invoke: (cmd: string, args?: Record<string, unknown>) => unknown }; __opened?: string[] };
+    const hook = () => {
+      const t = w.__TAURI_INTERNALS__;
+      if (!t || (t as { __hooked?: boolean }).__hooked) return;
+      const real = t.invoke.bind(t);
+      t.invoke = (cmd, args) => {
+        if (cmd.startsWith("plugin:opener|open_url")) (w.__opened ??= []).push(String(args?.url));
+        return real(cmd, args);
+      };
+      (t as { __hooked?: boolean }).__hooked = true;
+    };
+    hook();
+    document.addEventListener("DOMContentLoaded", hook);
+  });
+  return appPage;
+}
+
+// Brings the app back to the front (after the browser or a system dialog opened).
+export async function returnToApp() {
+  if (!onAndroid) return;
+  await adb(`am start -n ${ANDROID_PKG}/com.allinoneerp.app.MainActivity`);
+}
+
+// Use this "test" in specs so every page understands the base path (and, on Android, is the app).
 export const test = base.extend({
   page: async ({ page }, provide) => {
-    await provide(withBasePath(page));
+    if (!onAndroid) {
+      await provide(withBasePath(page));
+      return;
+    }
+    const app = await androidPage();
+    // Each test starts signed out on the login screen, like a fresh browser context.
+    await app.goto("/");
+    await app.evaluate(() => {
+      localStorage.clear();
+      sessionStorage.clear();
+    });
+    await app.goto("/");
+    await provide(app);
+    app.removeAllListeners();
   },
 });
+
+// CSV export: a browser download on desktop, a real file in the phone's Downloads folder on Android.
+export async function exportCsv(page: Page, click: () => Promise<void>): Promise<{ name: string; text: string }> {
+  if (!onAndroid) {
+    const [dl] = await Promise.all([page.waitForEvent("download"), click()]);
+    const path = await dl.path();
+    return { name: dl.suggestedFilename(), text: readFileSync(path!, "utf8") };
+  }
+  const before = new Set((await adb("ls /sdcard/Download")).split(/\s+/));
+  await click();
+  let name = "";
+  await expect.poll(async () => {
+    name = (await adb("ls /sdcard/Download")).split(/\s+/).find((f) => f && !before.has(f)) ?? "";
+    return name;
+  }, { timeout: 15_000 }).not.toBe("");
+  const text = await adb(`cat "/sdcard/Download/${name}"`);
+  await adb(`rm "/sdcard/Download/${name}"`);
+  return { name, text: text.replace(/^\uFEFF/, "") };
+}
+
+// "Open" buttons: a new tab on desktop; on Android the app hands the URL to the phone's browser.
+// Returns the URL that was opened.
+export async function openedUrl(page: Page, click: () => Promise<void>): Promise<string> {
+  if (!onAndroid) {
+    const [tab] = await Promise.all([page.context().waitForEvent("page"), click()]);
+    await tab.waitForLoadState("domcontentloaded").catch(() => {});
+    const url = tab.url();
+    await tab.close();
+    return url;
+  }
+  const count = await page.evaluate(() => ((window as unknown as { __opened?: string[] }).__opened ?? []).length);
+  await click();
+  let url = "";
+  await expect.poll(async () => {
+    url = await page.evaluate((n) => ((window as unknown as { __opened?: string[] }).__opened ?? [])[n] ?? "", count);
+    return url;
+  }, { timeout: 15_000 }).not.toBe("");
+  // Android really left the app for another activity (the browser / viewer).
+  await expect.poll(async () => !(await adb("dumpsys activity activities | grep -m1 -i 'ResumedActivity'")).includes(ANDROID_PKG), { timeout: 15_000 }).toBe(true);
+  await returnToApp();
+  return url;
+}
 
 export type TestUser = { name: string; email: string; password: string };
 
@@ -107,6 +211,19 @@ export async function inviteUser(page: Page, user: TestUser, role: string) {
 // Printing opens the system dialog, which would block a test. Capture the printed HTML instead:
 // call before navigating, then read with printedDocuments(page).
 export async function capturePrints(page: Page) {
+  if (onAndroid) {
+    // The app prints through its native bridge (Android print dialog); record what it was given.
+    await page.addInitScript(() => {
+      const w = window as unknown as { AndroidBridge?: { print(h: string, t: string): void; saveFile(n: string, m: string, b: string): string }; __printed?: string[] };
+      const real = w.AndroidBridge;
+      if (!real || (real as { __stub?: boolean }).__stub) return;
+      Object.defineProperty(window, "AndroidBridge", {
+        configurable: true,
+        value: { __stub: true, print: (html: string) => (w.__printed ??= []).push(html), saveFile: (n: string, m: string, b: string) => real.saveFile(n, m, b) },
+      });
+    });
+    return;
+  }
   await page.addInitScript(() => {
     const desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "contentWindow")!;
     Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
