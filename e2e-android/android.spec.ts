@@ -254,7 +254,7 @@ test("Settings shows the Android version and checks GitHub for a newer APK", asy
 
 // ---------- Installing and updating the APK ----------
 // Installs with the adb command-line tool: streaming a 100+ MB APK through Playwright's adb client can break (EPIPE).
-const adbInstall = (apk: string) => execSync(`adb install -r "${apk}"`, { stdio: "pipe", timeout: 240_000 });
+const adbInstall = (apk: string) => execSync(`adb ${process.env.E2E_ANDROID_SERIAL ? `-s ${process.env.E2E_ANDROID_SERIAL} ` : ""}install -r "${apk}"`, { stdio: "pipe", timeout: 240_000 });
 const TEST_APK = process.env.E2E_TEST_APK ?? "";
 const RELEASE_APK = process.env.E2E_RELEASE_APK ?? "";
 const APKSIGNER = process.env.E2E_APKSIGNER ?? "";

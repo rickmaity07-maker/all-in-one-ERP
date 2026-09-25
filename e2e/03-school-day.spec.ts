@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { test, hasOwner, owner, login, inviteUser, testUser, RUN, expectToast, watchForErrors, onAndroid } from "./helpers";
+import { test, hasOwner, owner, login, inviteUser, testUser, RUN, expectToast, watchForErrors, onApp } from "./helpers";
 
 // One full school day, in order: the owner creates staff and a student, the teacher runs a class,
 // the student sees the results, and the owner approves an absence note and cleans up.
@@ -91,7 +91,7 @@ test("teacher creates a class, enrolls the student, takes attendance and grades"
 // On Android the student uses the phone app and the teacher a normal browser: a cross-device conversation.
 test("teacher and student chat live in a private DM", async ({ browser, page }) => {
   const tCtx = await browser.newContext();
-  const sCtx = onAndroid ? null : await browser.newContext();
+  const sCtx = onApp ? null : await browser.newContext();
   const t = await tCtx.newPage();
   const s = sCtx ? await sCtx.newPage() : page;
   await login(t, teacher);

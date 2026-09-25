@@ -57,3 +57,4 @@ next-env.d.ts
 playwright-report-android-*/
 dist-android/
 reports/
+test-results*/

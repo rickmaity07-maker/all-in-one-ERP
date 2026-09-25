@@ -1,5 +1,8 @@
-import { test as base, expect, _android, type Page, type AndroidDevice } from "@playwright/test";
-import { readFileSync, existsSync } from "node:fs";
+import { test as base, expect, _android, chromium, type Page, type AndroidDevice } from "@playwright/test";
+import { readFileSync, existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { execSync, spawn } from "node:child_process";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 // Load .env.local so tests see the same settings as the app (Playwright doesn't do this itself).
 if (existsSync(".env.local")) {
@@ -25,13 +28,21 @@ export function withBasePath(page: Page) {
 // Playwright attaches to the app's WebView over adb instead of launching a browser.
 export const ANDROID_PKG = process.env.E2E_ANDROID_PKG ?? "";
 export const onAndroid = Boolean(ANDROID_PKG);
+// E2E_DESKTOP_APP=1 runs the same specs inside the installed Windows app (its WebView2, over CDP).
+export const onDesktopApp = process.env.E2E_DESKTOP_APP === "1";
+// Either native app: one app window instead of fresh browser tabs.
+export const onApp = onAndroid || onDesktopApp;
 const ANDROID_ORIGIN = process.env.E2E_ANDROID_ORIGIN ?? "http://tauri.localhost";
 
 let device: AndroidDevice | null = null;
 let appPage: Page | null = null;
 let appPid = "";
 export async function androidDevice() {
-  if (!device) [device] = await _android.devices();
+  // E2E_ANDROID_SERIAL picks one emulator when several run side by side (e.g. phone + tablet).
+  if (!device) {
+    const all = await _android.devices();
+    device = all.find((d) => !process.env.E2E_ANDROID_SERIAL || d.serial() === process.env.E2E_ANDROID_SERIAL) ?? null;
+  }
   if (!device) throw new Error("No Android device/emulator found (adb devices).");
   return device;
 }
@@ -79,6 +90,31 @@ export async function clearAppStorage(page: Page) {
   });
 }
 
+// ---------- Windows desktop app ----------
+const DESKTOP_EXE = join(process.env.LOCALAPPDATA ?? "", "all-in-one-erp", "app.exe");
+const CDP_PORT = 9333;
+let deskPage: Page | null = null;
+export async function desktopAppPage(): Promise<Page> {
+  if (deskPage && !deskPage.isClosed()) return deskPage;
+  try { execSync(`powershell -NoProfile -Command "Get-Process app -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*all-in-one-erp*' } | Stop-Process -Force"`); } catch {}
+  spawn(DESKTOP_EXE, [], { detached: true, stdio: "ignore", env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}` } }).unref();
+  for (let i = 0; i < 60 && !deskPage; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try {
+      const b = await chromium.connectOverCDP(`http://localhost:${CDP_PORT}`);
+      deskPage = b.contexts()[0]?.pages().find((p) => p.url().startsWith(ANDROID_ORIGIN)) ?? null;
+    } catch {}
+  }
+  if (!deskPage) throw new Error("Could not attach to the installed desktop app");
+  const goto = deskPage.goto.bind(deskPage);
+  deskPage.goto = (url, options) => goto(url.startsWith("/") ? ANDROID_ORIGIN + url : url, options);
+  await deskPage.addInitScript(() => {
+    const w = window as unknown as { __opened?: string[] };
+    window.addEventListener("erp:open-external", (e) => (w.__opened ??= []).push((e as CustomEvent).detail.url));
+  });
+  return deskPage;
+}
+
 // Brings the app back to the front (after the browser or a system dialog opened).
 export async function returnToApp() {
   if (!onAndroid) return;
@@ -98,11 +134,11 @@ export async function returnToApp() {
 // Use this "test" in specs so every page understands the base path (and, on Android, is the app).
 export const test = base.extend({
   page: async ({ page }, provide) => {
-    if (!onAndroid) {
+    if (!onApp) {
       await provide(withBasePath(page));
       return;
     }
-    const app = await androidPage();
+    const app = onAndroid ? await androidPage() : await desktopAppPage();
     await returnToApp(); // the app must be in front, or its WebView stops drawing
     // Each test starts signed out on the login screen, like a fresh browser context.
     await app.goto("/");
@@ -115,6 +151,20 @@ export const test = base.extend({
 
 // CSV export: a browser download on desktop, a real file in the phone's Downloads folder on Android.
 export async function exportCsv(page: Page, click: () => Promise<void>): Promise<{ name: string; text: string }> {
+  if (onDesktopApp) {
+    // The desktop app saves downloads straight into the Downloads folder.
+    const dir = join(homedir(), "Downloads");
+    const since = Date.now();
+    await click();
+    let name = "";
+    await expect.poll(() => {
+      name = readdirSync(dir).find((f) => f.endsWith(".csv") && !f.endsWith(".crdownload") && statSync(join(dir, f)).mtimeMs >= since - 1000) ?? "";
+      return name;
+    }, { timeout: 15_000 }).not.toBe("");
+    const text = readFileSync(join(dir, name), "utf8").replace(/^﻿/, "");
+    unlinkSync(join(dir, name));
+    return { name: name.replace(/ \(\d+\)(?=\.csv$)/, ""), text };
+  }
   if (!onAndroid) {
     const [dl] = await Promise.all([page.waitForEvent("download"), click()]);
     const path = await dl.path();
@@ -135,7 +185,7 @@ export async function exportCsv(page: Page, click: () => Promise<void>): Promise
 // "Open" buttons: a new tab on desktop; on Android the app hands the URL to the phone's browser.
 // Returns the URL that was opened.
 export async function openedUrl(page: Page, click: () => Promise<void>): Promise<string> {
-  if (!onAndroid) {
+  if (!onApp) {
     const [tab] = await Promise.all([page.context().waitForEvent("page"), click()]);
     await tab.waitForLoadState("domcontentloaded").catch(() => {});
     const url = tab.url();
@@ -149,6 +199,7 @@ export async function openedUrl(page: Page, click: () => Promise<void>): Promise
     url = await page.evaluate((n) => ((window as unknown as { __opened?: string[] }).__opened ?? [])[n] ?? "", count);
     return url;
   }, { timeout: 15_000 }).not.toBe("");
+  if (onDesktopApp) return url; // handed to the default browser by the app
   // Android really left the app for another activity (the browser / viewer).
   await expect.poll(async () => !(await adb("dumpsys activity activities | grep -m1 -i 'ResumedActivity'")).includes(ANDROID_PKG), { timeout: 15_000 }).toBe(true);
   await new Promise((r) => setTimeout(r, 2500)); // let the other app finish opening

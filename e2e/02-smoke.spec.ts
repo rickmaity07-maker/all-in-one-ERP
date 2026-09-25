@@ -1,5 +1,5 @@
 import { expect } from "@playwright/test";
-import { test, hasOwner, owner, login, watchForErrors, expectNoErrorToast, onAndroid } from "./helpers";
+import { test, hasOwner, owner, login, watchForErrors, expectNoErrorToast, onAndroid, onApp } from "./helpers";
 
 // Every page, opened as the owner: must render its heading area with no crashes,
 // console errors or "Could not load ..." toasts (which usually mean a missing table/column).
@@ -37,7 +37,7 @@ test.describe("Smoke: every module loads", () => {
 
 test("losing the connection shows an offline notice and keeps you signed in", async ({ page, context }) => {
   test.skip(!hasOwner, "Set E2E_OWNER_EMAIL and E2E_OWNER_PASSWORD in .env.local");
-  test.skip(onAndroid, "covered by the Android airplane-mode test");
+  test.skip(onApp, "covered by the Android airplane-mode test; the app window can't be taken offline from here");
   await login(page, owner);
   await context.setOffline(true);
   await expect(page.getByText(/You're offline/)).toBeVisible();
