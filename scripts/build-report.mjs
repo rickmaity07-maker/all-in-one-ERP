@@ -85,7 +85,7 @@ const summaryRows = suites.map((s) => {
 }).join("");
 const totals = (platform) => {
   const rows = suites.filter((s) => s.platform === platform && s.data).flatMap((s) => s.data.rows);
-  return { total: rows.length, passed: count(rows, "passed") };
+  return { total: rows.length - count(rows, "skipped"), passed: count(rows, "passed") };
 };
 const comp = totals("Computer"), andr = totals("Android"), srv = totals("Server");
 
@@ -121,7 +121,7 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><title>All-In-One
   <h1>All-In-One ERP</h1>
   <div style="font-size:16px;margin-top:6px">Features &amp; test report — computer and Android</div>
   <div class="cards">
-    <div class="card"><div class="muted">Computer tests</div><div class="big">${comp.passed}/${comp.total}</div><div class="muted">passed</div></div>
+    <div class="card"><div class="muted">Computer tests</div><div class="big">${comp.passed}/${comp.total}</div><div class="muted">passed (skipped-by-design excluded)</div></div>
     <div class="card"><div class="muted">Android tests</div><div class="big">${andr.passed}/${andr.total}</div><div class="muted">passed</div></div>
     <div class="card"><div class="muted">Server / database tests</div><div class="big">${srv.passed}/${srv.total}</div><div class="muted">passed</div></div>
   </div>
@@ -132,12 +132,33 @@ const html = `<!doctype html><html><head><meta charset="utf-8"><title>All-In-One
 </div>
 <section class="page"><h2>How the tests were run</h2>
 <table><tbody>
-<tr><th>Computer</th><td>Windows 10 Pro, Microsoft Edge driven by Playwright against the app (same code the Windows app ships). The installed Windows app was also updated online from the previous release and checked (update test).</td></tr>
+<tr><th>Computer</th><td>Windows 10 Pro. The same end-to-end suite runs three ways: (1) inside the installed Windows desktop app (Playwright attached to its WebView2), (2) in Microsoft Edge against a local build, (3) in Microsoft Edge against the live web version on GitHub Pages. The installed Windows app was also updated online from the previous release and checked (update test).</td></tr>
 <tr><th>Android</th><td>The real Android app (APK) installed on Android 15 emulators — a Pixel 6 phone and a Pixel C tablet in landscape — with Playwright attached to the app's WebView over adb. Hardware keys, rotation, keyboard, airplane mode, font size, file picker, print dialog, Downloads, browser hand-off and APK installs are driven through adb. Runs on this PC (Intel VT-x + Windows Hypervisor Platform) and on GitHub Actions.</td></tr>
 <tr><th>Same system</th><td>Both apps share one code base and one Supabase database; cross-device tests change data in one (website/desktop) and check it in the other (Android), in both directions, and a live chat runs between a browser and the phone.</td></tr>
 <tr><th>Server</th><td>Database security rules and business logic tested on a local Postgres (PGlite) with the production schema.</td></tr>
 <tr><th>Security</th><td>Row-level security for every table and role, private data isolation, storage access, signed updates (desktop minisign, Android APK signature — a copy signed with another key is refused), least-privilege Android permissions, dependency audit (npm audit: 0 vulnerabilities), strict content-security policy.</td></tr>
 <tr><th>Known framework behaviour</th><td>On Android, Tauri (the app framework) can log "reading 'runCallback'" in a page that is being unloaded when a test performs a full page reload while a native call is in flight. The new page is unaffected and the app itself navigates without full reloads; the Android test harness ignores only this message.</td></tr>
+</tbody></table></section>
+<section class="page"><h2>Bugs found by the tests and fixed</h2>
+<table><thead><tr><th>Where</th><th>Problem</th><th>Fix</th></tr></thead><tbody>
+${[
+  ["All", "Losing the connection signed people out with a wrong \"waiting for approval\" message", "Keeps the last known profile, retries, shows an offline notice"],
+  ["All", "Log Out ended the person's sessions on every device", "Log Out now signs out this device only"],
+  ["All", "Closing the app within seconds of signing in could forget the login", "Session stored in IndexedDB (written immediately)"],
+  ["All", "Calendar days showed at most 3 events; the rest could not be opened", "\"+N more\" opens the day's full list; events are real buttons"],
+  ["All", "Long notice titles pushed phone pages sideways", "Long text wraps on the dashboard and notice board"],
+  ["All", "Negative balances shown as $-300.00", "Shown as -$300.00"],
+  ["All", "Long lecture titles covered the Play button on tablets", "Play button sits above the title"],
+  ["Web", "Home-page data requested outside the site (404s) on GitHub Pages", "Folder-style URLs under the sub-folder"],
+  ["Web", "Folder-style URLs looped the forced password change", "Path checks ignore trailing slashes"],
+  ["Windows app", "Export CSV silently did nothing (WebView2 ignores browser downloads)", "Saved natively into the Downloads folder"],
+  ["Android", "Back on the first screen crashed the app on exit", "Back steps through pages, then backgrounds the app"],
+  ["Android", "No offline notice (WebView doesn't track connectivity)", "App forwards Android's connection state to the page"],
+  ["Android", "Changing the system font size could blank the app", "Font/density changes handled in place"],
+  ["Android", "Printing and CSV downloads unsupported by the WebView", "Native bridge: Android print dialog, Downloads folder"],
+  ["Android", "Update check could hit GitHub API limits", "Checked natively from the release's latest.json"],
+  ["Security", "High-severity advisory in an image library (sharp)", "Dependency updated; npm audit reports 0 vulnerabilities"],
+].map(([w, p, f]) => `<tr><td>${w}</td><td>${p}</td><td>${f}</td></tr>`).join("")}
 </tbody></table></section>
 <section class="page"><h2>Features</h2><div class="cols">${FEATURES.map(([g, items]) => `<div><h3>${esc(g)}</h3><ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>`).join("")}</div></section>
 ${detail}
@@ -152,4 +173,4 @@ await page.pdf({ path: `${R}/All-In-One-ERP-Report.pdf`, format: "A4", printBack
   margin: { top: "14mm", bottom: "16mm", left: "12mm", right: "12mm" } });
 await browser.close();
 console.log(`Report written to ${R}/All-In-One-ERP-Report.pdf`);
-for (const s of suites) console.log(`${s.name}: ${s.data ? `${count(s.data.rows, "passed")}/${s.data.rows.length}` : "not run"}`);
+for (const s of suites) console.log(`${s.name}: ${s.data ? `${count(s.data.rows, "passed")}/${s.data.rows.length - count(s.data.rows, "skipped")}${count(s.data.rows, "skipped") ? ` (+${count(s.data.rows, "skipped")} skipped by design)` : ""}` : "not run"}`);

@@ -143,11 +143,14 @@ test("Chat: file attachment uploads and opens intact", async ({ page }) => {
   // short while, so check storage itself rather than the link.)
   const storagePath = decodeURIComponent(new URL(link).pathname.split("/object/sign/chat-files/")[1]);
   const [folder, storedName] = [storagePath.slice(0, storagePath.lastIndexOf("/")), storagePath.slice(storagePath.lastIndexOf("/") + 1)];
-  const res = await page.request.post(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/list/chat-files`, {
+  // From the test machine (an app's WebView can't share its request context).
+  const api = await request.newContext();
+  const res = await api.post(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/list/chat-files`, {
     headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, Authorization: `Bearer ${await ownerToken(page)}` },
     data: { prefix: folder, limit: 1000 },
   });
   const names = ((await res.json()) as { name: string }[]).map((f) => f.name);
+  await api.dispose();
   expect(names, "file removed from storage").not.toContain(storedName);
 });
 
