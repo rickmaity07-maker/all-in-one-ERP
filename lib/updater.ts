@@ -5,7 +5,10 @@ import type { Update } from "@tauri-apps/plugin-updater";
 import { isAndroidApp, isTauri, openExternal } from "./utils";
 
 // Android updates are a new APK from the latest GitHub release (the desktop updater does not run on phones).
-const RELEASES_API = "https://api.github.com/repos/rickmaity07-maker/all-in-one-ERP/releases/latest";
+// latest.json is the file the desktop updater reads; fetched through the app (plugin-http), so there is
+// no browser CORS and no GitHub API rate limit.
+const REPO = "https://github.com/rickmaity07-maker/all-in-one-ERP";
+const LATEST_JSON = `${REPO}/releases/latest/download/latest.json`;
 let apkUrl: string | null = null;
 
 const newer = (a: string, b: string) => {
@@ -44,13 +47,19 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
   setStatus({ state: "checking" });
   if (isAndroidApp()) {
     try {
-      const res = await fetch(RELEASES_API, { headers: { Accept: "application/vnd.github+json" } });
+      const { fetch: nativeFetch } = await import("@tauri-apps/plugin-http");
+      const res = await nativeFetch(LATEST_JSON);
       if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
       const rel = await res.json();
-      const latest = String(rel.tag_name ?? "").replace(/^v/, "");
-      const apk = (rel.assets ?? []).find((a: { name: string }) => a.name.endsWith(".apk"));
-      apkUrl = apk?.browser_download_url ?? null;
-      setStatus(apkUrl && newer(latest, await getAppVersion()) ? { state: "available", version: latest, notes: rel.body ?? undefined } : { state: "none" });
+      const latest = String(rel.version ?? "").replace(/^v/, "");
+      apkUrl = null;
+      if (latest && newer(latest, await getAppVersion())) {
+        // The APK is attached a few minutes after the desktop build; only offer it once it exists.
+        const url = `${REPO}/releases/download/v${latest}/all-in-one-erp-${latest}.apk`;
+        const head = await nativeFetch(url, { method: "HEAD" });
+        if (head.ok) apkUrl = url;
+      }
+      setStatus(apkUrl ? { state: "available", version: latest, notes: rel.notes ?? undefined } : { state: "none" });
     } catch (e) {
       setStatus({ state: "error", message: e instanceof Error ? e.message : String(e) });
     }

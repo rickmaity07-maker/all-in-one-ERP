@@ -1,6 +1,9 @@
 package com.allinoneerp.app
 
 import android.content.ContentValues
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -47,6 +50,24 @@ class MainActivity : TauriActivity() {
 
   override fun onWebViewCreate(webView: WebView) {
     webView.addJavascriptInterface(Bridge(), "AndroidBridge")
+    watchConnectivity(webView)
+  }
+
+  // Android's WebView doesn't notice connection changes by itself; pass them on so the page's
+  // navigator.onLine and online/offline events (the "You're offline" notice) work like in a browser.
+  private fun watchConnectivity(webView: WebView) {
+    val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+    val update = {
+      val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+      val online = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+      runOnUiThread { webView.setNetworkAvailable(online) }
+    }
+    update()
+    cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+      override fun onAvailable(network: Network) = update()
+      override fun onLost(network: Network) = update()
+      override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = update()
+    })
   }
 
   // Called from lib/utils.ts (printDocument, downloadCsv) when running inside the Android app.

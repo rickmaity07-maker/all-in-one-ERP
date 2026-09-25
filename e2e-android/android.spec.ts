@@ -219,7 +219,10 @@ test("Settings shows the Android version and checks GitHub for a newer APK", asy
   await login(page, owner);
   await page.goto("/settings");
   await expect(page.getByText(process.env.E2E_ANDROID_VERSION ?? APP_VERSION).first()).toBeVisible();
-  await page.getByRole("button", { name: /Check for updates/i }).click();
+  // The app may already have checked by itself on start-up.
+  const checkBtn = page.getByRole("button", { name: /Check for updates/i });
+  await expect(checkBtn.or(page.getByRole("button", { name: "Download update" }).first()).first()).toBeVisible({ timeout: 30_000 });
+  if (await checkBtn.isVisible()) await checkBtn.click();
   // The test build is numbered below the published release, so an update must be offered as an APK download.
   if (process.env.E2E_ANDROID_VERSION === "0.0.1") {
     const download = page.getByRole("button", { name: "Download update" }).first();
@@ -275,4 +278,48 @@ test("the release APK is signed with the release key and starts without crashing
   expect(await adb("logcat -d -b crash")).not.toContain(releasePkg);
   await adb(`am force-stop ${releasePkg}`);
   await returnToApp();
+});
+
+// ---------- One system: the website/desktop app and the Android app share the same live data ----------
+const postNotice = async (p: Page, title: string) => {
+  await p.goto("/announcements");
+  await p.getByRole("button", { name: "New Announcement" }).last().click();
+  await p.getByRole("dialog").getByLabel("Title").fill(title);
+  await p.getByRole("dialog").getByLabel("Message").fill("Posted by the automated cross-device test.");
+  await p.getByRole("dialog").getByRole("button", { name: "Post" }).click();
+  await expect(p.getByText(title).first()).toBeVisible();
+};
+const deleteNotice = async (p: Page, title: string) => {
+  p.once("dialog", (d) => d.accept());
+  await p.locator("article").filter({ hasText: title }).getByTitle("Delete").click();
+  await expect(p.getByText(title)).toHaveCount(0);
+};
+
+test("a change made on the website shows up in the Android app", async ({ page, browser }) => {
+  const title = `E2E web→android ${Date.now()}`;
+  const web = await (await browser.newContext()).newPage();
+  await login(web, owner);
+  await postNotice(web, title);
+  await login(page, owner);
+  await page.goto("/announcements");
+  await expect(page.getByText(title).first()).toBeVisible();
+  // …and deleting it on the website removes it from the phone too.
+  await deleteNotice(web, title);
+  await page.goto("/announcements");
+  await expect(page.getByText(title)).toHaveCount(0);
+  await web.context().close();
+});
+
+test("a change made in the Android app shows up on the website", async ({ page, browser }) => {
+  const title = `E2E android→web ${Date.now()}`;
+  await login(page, owner);
+  await postNotice(page, title);
+  const web = await (await browser.newContext()).newPage();
+  await login(web, owner);
+  await web.goto("/announcements");
+  await expect(web.getByText(title).first()).toBeVisible();
+  await deleteNotice(page, title);
+  await web.goto("/announcements");
+  await expect(web.getByText(title)).toHaveCount(0);
+  await web.context().close();
 });

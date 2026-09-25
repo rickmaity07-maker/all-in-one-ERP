@@ -62,7 +62,17 @@ export async function androidPage(): Promise<Page> {
 // Brings the app back to the front (after the browser or a system dialog opened).
 export async function returnToApp() {
   if (!onAndroid) return;
-  await adb(`am start -n ${ANDROID_PKG}/com.allinoneerp.app.MainActivity`);
+  // Another app (e.g. the browser finishing its own start-up) can jump back on top; insist until
+  // the app has stayed in front for a moment, otherwise its WebView stops drawing.
+  const front = async () => (await adb("dumpsys activity activities | grep -m1 -E 'ResumedActivity'")).includes(ANDROID_PKG);
+  for (let i = 0, steady = 0; i < 20 && steady < 3; i++) {
+    if (await front()) steady++;
+    else {
+      steady = 0;
+      await adb(`am start -n ${ANDROID_PKG}/com.allinoneerp.app.MainActivity`);
+    }
+    await new Promise((r) => setTimeout(r, 700));
+  }
 }
 
 // Use this "test" in specs so every page understands the base path (and, on Android, is the app).
@@ -123,6 +133,7 @@ export async function openedUrl(page: Page, click: () => Promise<void>): Promise
   }, { timeout: 15_000 }).not.toBe("");
   // Android really left the app for another activity (the browser / viewer).
   await expect.poll(async () => !(await adb("dumpsys activity activities | grep -m1 -i 'ResumedActivity'")).includes(ANDROID_PKG), { timeout: 15_000 }).toBe(true);
+  await new Promise((r) => setTimeout(r, 2500)); // let the other app finish opening
   await returnToApp();
   return url;
 }

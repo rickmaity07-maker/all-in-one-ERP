@@ -6,6 +6,9 @@ adb install -r dist-android/test-debug.apk
 # Tablet: landscape, like a desktop screen. Phone: portrait.
 adb shell settings put system accelerometer_rotation 0
 if [ "$E2E_SUITE" = "full" ]; then adb shell settings put system user_rotation 1; else adb shell settings put system user_rotation 0; fi
+# Skip Chrome's first-run screens (on a real phone they appear once), so opened links land straight in a tab.
+adb shell "echo '_ --disable-fre --no-default-browser-check --no-first-run' > /data/local/tmp/chrome-command-line"
+adb shell am set-debug-app --persistent com.android.chrome || true
 adb logcat -c
 adb shell am start -W -n "$E2E_ANDROID_PKG/com.allinoneerp.app.MainActivity"
 sleep 5
