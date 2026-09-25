@@ -7,6 +7,7 @@ import { useSession } from "@/lib/session";
 import { getAppVersion, useUpdater } from "@/lib/updater";
 import { Card, Field, SubmitButton, inputClass, toast } from "@/components/ui";
 import { errorMessage } from "@/lib/utils";
+import PrivateInfo from "@/components/PrivateInfo";
 
 export default function SettingsPage() {
   const { profile, user, refresh } = useSession();
@@ -125,6 +126,8 @@ export default function SettingsPage() {
             </form>
           </Card>
         </div>
+
+        {user && <PrivateInfo userId={user.id} />}
       </div>
     </main>
   );

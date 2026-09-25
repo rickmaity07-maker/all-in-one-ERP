@@ -1,17 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { School, Plus, CalendarRange, Users, Trash2, Pencil, UserPlus, X, MapPin, Clock } from "lucide-react";
+import { School, Plus, CalendarRange, Users, Trash2, Pencil, UserPlus, X, MapPin, Clock, Wand2 } from "lucide-react";
+import AutoSchedule from "@/components/AutoSchedule";
 import { supabase } from "@/lib/supabase";
 import { useSession, isAdmin, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Loading, Empty, Badge, IconButton, inputClass, toast, confirmAction } from "@/components/ui";
 import { errorMessage, initials, matches, type Row } from "@/lib/utils";
 
-type TabId = "classes" | "timetable";
+type TabId = "classes" | "timetable" | "auto";
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const COLORS = ["bg-indigo-500", "bg-pink-500", "bg-emerald-500", "bg-orange-500", "bg-cyan-500", "bg-purple-500", "bg-blue-500"];
-const emptyForm = { name: "", code: "", room: "", days: [] as string[], start_time: "09:00", end_time: "10:30", term: "", teacher_id: "" };
+const emptyForm = { name: "", code: "", room: "", days: [] as string[], start_time: "09:00", end_time: "10:30", term: "", teacher_id: "", course_id: "", term_id: "", capacity: "", facility_id: "" };
 
 export default function ClassesPage() {
   const { role, profile } = useSession();
@@ -23,6 +24,9 @@ export default function ClassesPage() {
   const enrollments = useTable("class_enrollments");
   const [students, setStudents] = useState<Row[]>([]);
   const [teachers, setTeachers] = useState<Row[]>([]);
+  const courses = useTable("courses", { orderBy: "code", ascending: true });
+  const terms = useTable("terms", { orderBy: "starts_on" });
+  const facilities = useTable("facilities", { orderBy: "name", ascending: true });
 
   const [editing, setEditing] = useState<Row | "new" | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -48,7 +52,7 @@ export default function ClassesPage() {
     setForm(
       c === "new"
         ? emptyForm
-        : { name: c.name, code: c.code ?? "", room: c.room ?? "", days: String(c.days ?? "").split(",").filter(Boolean), start_time: c.start_time ?? "", end_time: c.end_time ?? "", term: c.term ?? "", teacher_id: c.teacher_id ?? "" }
+        : { name: c.name, code: c.code ?? "", room: c.room ?? "", days: String(c.days ?? "").split(",").filter(Boolean), start_time: c.start_time ?? "", end_time: c.end_time ?? "", term: c.term ?? "", teacher_id: c.teacher_id ?? "", course_id: c.course_id ?? "", term_id: c.term_id ?? "", capacity: c.capacity ? String(c.capacity) : "", facility_id: c.facility_id ?? "" }
     );
   };
 
@@ -58,7 +62,9 @@ export default function ClassesPage() {
     if (form.end_time <= form.start_time) return toast("End time must be after start time.", "error");
     setBusy(true);
     const teacher = teachers.find((t) => t.id === form.teacher_id);
-    const values: Row = { name: form.name, code: form.code || null, room: form.room || null, days: form.days.join(","), start_time: form.start_time, end_time: form.end_time, term: form.term || null };
+    const values: Row = { name: form.name, code: form.code || null, room: form.room || null, days: form.days.join(","), start_time: form.start_time, end_time: form.end_time, term: form.term || terms.rows.find((t) => t.id === form.term_id)?.name || null,
+      course_id: form.course_id || null, term_id: form.term_id || null, capacity: form.capacity ? parseInt(form.capacity) : null, facility_id: form.facility_id || null };
+    if (form.facility_id) values.room = facilities.rows.find((x) => x.id === form.facility_id)?.name ?? values.room;
     if (admin && form.teacher_id) Object.assign(values, { teacher_id: form.teacher_id, teacher_name: teacher?.full_name });
     const ok = editing === "new" ? await classes.insert(values, "Class created.") : await classes.update((editing as Row).id, values, "Class updated.");
     setBusy(false);
@@ -88,6 +94,7 @@ export default function ClassesPage() {
       tabs={[
         { id: "classes", label: staff ? (admin ? "All Classes" : "My Classes") : "My Classes", icon: Users, group: "Teaching" },
         { id: "timetable", label: "Weekly Timetable", icon: CalendarRange, group: "Teaching" },
+        ...(admin ? [{ id: "auto" as TabId, label: "Auto-schedule", icon: Wand2, group: "Teaching" }] : []),
       ]}
       activeTab={activeTab}
       onTab={setActiveTab}
@@ -130,7 +137,28 @@ export default function ClassesPage() {
               <Field label="Ends"><input type="time" required className={inputClass} value={form.end_time} onChange={(e) => setForm({ ...form, end_time: e.target.value })} /></Field>
               <Field label="Room"><input className={inputClass} value={form.room} onChange={(e) => setForm({ ...form, room: e.target.value })} /></Field>
             </div>
-            <Field label="Term"><input className={inputClass} value={form.term} onChange={(e) => setForm({ ...form, term: e.target.value })} placeholder="e.g. Fall 2026" /></Field>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="Course">
+                <select className={inputClass} value={form.course_id} onChange={(e) => { const c = courses.rows.find((x) => x.id === e.target.value); setForm({ ...form, course_id: e.target.value, code: form.code || c?.code || "", name: form.name || c?.title || "" }); }}>
+                  <option value="">— None —</option>
+                  {courses.rows.map((c) => <option key={c.id} value={c.id}>{c.code} — {c.title}</option>)}
+                </select>
+              </Field>
+              <Field label="Academic Term">
+                <select className={inputClass} value={form.term_id} onChange={(e) => setForm({ ...form, term_id: e.target.value })}>
+                  <option value="">— None —</option>
+                  {terms.rows.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Seat Capacity"><input type="number" min="1" className={inputClass} value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} placeholder="Unlimited" /></Field>
+              <Field label="Facility">
+                <select className={inputClass} value={form.facility_id} onChange={(e) => setForm({ ...form, facility_id: e.target.value })}>
+                  <option value="">— Free-text room —</option>
+                  {facilities.rows.map((x) => <option key={x.id} value={x.id}>{x.name} ({x.capacity})</option>)}
+                </select>
+              </Field>
+            </div>
+            <Field label="Term Label"><input className={inputClass} value={form.term} onChange={(e) => setForm({ ...form, term: e.target.value })} placeholder="e.g. Fall 2026" /></Field>
             <SubmitButton busy={busy}>Save Class</SubmitButton>
           </form>
         </Modal>
@@ -165,6 +193,8 @@ export default function ClassesPage() {
 
       {classes.loading || enrollments.loading ? (
         <Loading />
+      ) : activeTab === "auto" ? (
+        <AutoSchedule classes={classes.rows} courses={courses.rows} terms={terms.rows} facilities={facilities.rows} onApplied={() => classes.reload()} />
       ) : activeTab === "classes" ? (
         <>
           <PageHeading title={staff ? "Classes & Rosters" : "My Classes"} subtitle={staff ? "Create your class sections, set the schedule and enroll students." : "The classes you are enrolled in this term."} />

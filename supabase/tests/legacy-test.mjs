@@ -1,8 +1,9 @@
 // Simulates the user's live DB: legacy lab_equipment/campus_events exist before schema.sql runs.
 import { PGlite } from "@electric-sql/pglite";
+import { btree_gist } from "@electric-sql/pglite/contrib/btree_gist";
 import { readFileSync } from "node:fs";
 const schema = readFileSync(process.argv[2], "utf8");
-const db = new PGlite();
+const db = new PGlite({ extensions: { btree_gist } });
 await db.exec(`
   create role anon nologin; create role authenticated nologin;
   create schema auth; create schema storage;

@@ -5,8 +5,10 @@ export type Row = Record<string, any>;
 
 export const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-export const money = (n: number | string | null | undefined) =>
-  `$${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const money = (n: number | string | null | undefined) => {
+  const v = Number(n || 0);
+  return `${v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
 
 // Calendar date (YYYY-MM-DD) in the user's own time zone. toISOString() would give the UTC date,
 // which is "yesterday" for a few hours after midnight in time zones ahead of UTC (e.g. Germany).

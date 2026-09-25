@@ -1,10 +1,11 @@
 // Dry-runs supabase/schema.sql in embedded Postgres with a minimal Supabase stub,
 // then security-tests the row-level security rules as different users.
 import { PGlite } from "@electric-sql/pglite";
+import { btree_gist } from "@electric-sql/pglite/contrib/btree_gist";
 import { readFileSync } from "node:fs";
 
 const schema = readFileSync(process.argv[2] ?? new URL("../schema.sql", import.meta.url), "utf8");
-const db = new PGlite();
+const db = new PGlite({ extensions: { btree_gist } });
 
 await db.exec(`
   create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
@@ -378,6 +379,194 @@ check("user clears the flag after changing password", !r.error && r.rows.length 
   check("back-to-back classes in the same room are allowed", !r.error, r.error ?? "");
   r = await as(teacher2, `insert into public.classes (name, room, days, start_time, end_time) values ('Bad times', 'C-3', 'Fri', '11:00', '10:00')`);
   check("class that ends before it starts is rejected", !!r.error, r.error ?? "");
+}
+
+
+// --- Section 10: academic core, billing ledger, facilities, exams, credentials, analytics ---
+{
+  const q1 = async (sql, params = []) => (await db.query(sql, params)).rows;
+  const [term] = await q1(`insert into public.terms (name, starts_on, ends_on, add_drop_deadline, is_current)
+    values ('Test Term', current_date - 10, current_date + 90, current_date + 5, true) returning id`);
+  const [prog] = await q1(`insert into public.programs (name, total_credits) values ('BSc Test', 15) returning id`);
+  const [c1] = await q1(`insert into public.courses (code, title, credits) values ('T101', 'Intro', 5) returning id`);
+  const [c2] = await q1(`insert into public.courses (code, title, credits, prerequisites) values ('T201', 'Advanced', 5, array['${c1.id}']::uuid[]) returning id`);
+  const [c3] = await q1(`insert into public.courses (code, title, credits) values ('T102', 'Elective', 5) returning id`);
+  await q1(`insert into public.program_courses (program_id, course_id, recommended_term) values ($1, $2, 1), ($1, $3, 2), ($1, $4, 1)`, [prog.id, c1.id, c2.id, c3.id]);
+  await q1(`update public.registrar_records set program_id = $1 where profile_id = $2`, [prog.id, ids.alice]);
+  await q1(`insert into public.fee_schedules (term_id, name, per_credit, flat_fee, full_time_credits) values ($1, 'Standard', 100, 50, 10)`, [term.id]);
+  const sec = async (name, course, cap) => (await q1(`insert into public.classes (name, teacher_id, teacher_name, course_id, term_id, capacity) values ($1, $2, 'teacher', $3, $4, $5) returning id`, [name, ids.teacher, course, term.id, cap]))[0].id;
+  const s1 = await sec('Intro A', c1.id, 1), s2 = await sec('Advanced A', c2.id, 5), s3 = await sec('Elective A', c3.id, 5);
+  const bal = async (who) => Number((await as(who, `select balance from public.student_balances where student_id = $1`, [who])).rows[0]?.balance ?? 0);
+
+  r = await as(ids.alice, `select public.register_for_section($1) as s`, [s1]);
+  check("student self-registers for a section", r.rows[0]?.s === "enrolled", r.error ?? JSON.stringify(r.rows));
+  r = await as(ids.bob, `select public.register_for_section($1) as s`, [s1]);
+  check("full section puts the next student on the waitlist", r.rows[0]?.s === "waitlisted", r.error ?? JSON.stringify(r.rows));
+  r = await as(ids.alice, `select public.register_for_section($1)`, [s2]);
+  check("missing prerequisite blocks registration", !!r.error && /prerequisite/i.test(r.error) && /T101/.test(r.error), r.error ?? "");
+  check("tuition charged automatically on enrolment (5 × 100 + 50)", (await bal(ids.alice)) === 550, String(await bal(ids.alice)));
+  await as(ids.alice, `select public.register_for_section($1)`, [s3]);
+  check("second course adds only the per-credit difference", (await bal(ids.alice)) === 1050, String(await bal(ids.alice)));
+  r = await as(ids.alice, `select public.drop_section($1)`, [s3]);
+  check("student drops a course", !r.error, r.error ?? "");
+  check("drop before the deadline reverses the tuition", (await bal(ids.alice)) === 550, String(await bal(ids.alice)));
+  check("dropping below full-time notifies the student", (await count(ids.alice, `select * from public.notifications where title = 'You are now below full-time'`)) === 1);
+  check("…and alerts administrators", (await count(ids.admin, `select * from public.notifications where title = 'Student dropped below full-time'`)) >= 1);
+  check("the event is recorded for webhooks", (await db.query(`select 1 from public.event_log where event = 'student.below_full_time'`)).rows.length >= 1);
+
+  await as(ids.alice, `select public.drop_section($1)`, [s1]);
+  r = await as(ids.bob, `select status from public.class_enrollments where class_id = $1`, [s1]);
+  check("freed seat promotes the waitlisted student", r.rows[0]?.status === "enrolled", JSON.stringify(r.rows));
+  check("promoted student is notified", (await count(ids.bob, `select * from public.notifications where title = 'You got a seat'`)) === 1);
+  check("promoted student is billed", (await bal(ids.bob)) === 550, String(await bal(ids.bob)));
+
+  r = await as(ids.admin, `update public.ledger_entries set amount = 1 returning id`);
+  check("ledger entries cannot be edited (append-only)", !!r.error || r.rows.length === 0, r.error ?? "");
+  let appendOnly = null;
+  try { await db.exec(`delete from public.ledger_entries`); } catch (e) { appendOnly = e.message; }
+  check("ledger entries cannot be deleted even by the database owner", !!appendOnly && /cannot be changed/.test(appendOnly), appendOnly ?? "deleted!");
+  const [led] = await q1(`select count(*)::int as n, count(*) filter (where debit_account = credit_account)::int as bad from public.ledger_entries`);
+  check("every ledger entry is double-entry (distinct debit and credit accounts)", led.n > 0 && led.bad === 0, JSON.stringify(led));
+  const acctAlice = (await q1(`select id from public.student_accounts where student_id = $1`, [ids.alice]))[0].id;
+  r = await as(ids.alice, `insert into public.ledger_entries (account_id, entry_type, amount, debit_account, credit_account, description) values ($1, 'payment', 999, 'cash:x', 'student:x', 'fake')`, [acctAlice]);
+  check("students cannot write to the ledger", !!r.error, r.error ?? "");
+  r = await as(ids.alice, `select public.record_payment($1, 550, 'card', 'x')`, [ids.alice]);
+  check("students cannot record payments", !!r.error, r.error ?? "");
+  const beforePay = await bal(ids.bob);
+  r = await as(ids.admin, `select public.record_payment($1, 100, 'card', 'POS-1')`, [ids.bob]);
+  check("admin records a payment → balance drops by the amount", !r.error && (await bal(ids.bob)) === beforePay - 100, r.error ?? String(await bal(ids.bob)));
+  check("students see only their own ledger", (await count(ids.alice, `select * from public.ledger_entries`)) === (await q1(`select count(*)::int as n from public.ledger_entries where account_id = $1`, [acctAlice]))[0].n);
+
+  await q1(`insert into public.student_accounts (student_id, hold, hold_reason) values ($1, true, 'Test hold') on conflict (student_id) do update set hold = true, hold_reason = 'Test hold'`, [ids.eve]);
+  r = await as(ids.eve, `select public.register_for_section($1)`, [s3]);
+  check("financial hold blocks registration", !!r.error && /hold/i.test(r.error), r.error ?? "");
+
+  r = await as(ids.admin, `insert into public.aid_awards (student_id, term_id, name, amount) values ($1, $2, 'Merit grant', 200) returning id`, [ids.bob, term.id]);
+  const aidId = r.rows[0]?.id;
+  r = await as(ids.bob, `update public.aid_awards set amount = 5000 where id = $1 returning id`, [aidId]);
+  check("student cannot change an aid amount", !!r.error, r.error ?? "");
+  r = await as(ids.bob, `update public.aid_awards set status = 'accepted' where id = $1 returning status`, [aidId]);
+  check("student accepts an aid offer", r.rows[0]?.status === "accepted", r.error ?? "");
+  await as(ids.admin, `update public.aid_awards set status = 'disbursed' where id = $1`, [aidId]);
+  check("disbursed aid is credited to the account automatically", (await bal(ids.bob)) === 250, String(await bal(ids.bob)));
+
+  r = await as(ids.admin, `insert into public.payment_plans (account_id, term_id, total, installments, first_due) values ((select id from public.student_accounts where student_id = $1), $2, 250, 3, current_date + 30) returning id`, [ids.bob, term.id]);
+  const inst = await q1(`select amount from public.plan_installments where plan_id = $1 order by seq`, [r.rows[0].id]);
+  check("installment plan splits the total exactly", inst.length === 3 && inst.reduce((s, x) => s + Number(x.amount), 0) === 250, JSON.stringify(inst));
+
+  // Degree audit & prerequisites satisfied after completion
+  await as(ids.admin, `update public.class_enrollments set status = 'completed', final_grade = 'A' where class_id = $1 and student_id = $2`, [s1, ids.alice]);
+  r = await as(ids.alice, `select public.degree_audit($1) as a`, [ids.alice]);
+  const audit = r.rows[0]?.a;
+  check("degree audit counts completed credits", audit?.completed_credits === 5 && audit?.program?.name === "BSc Test", r.error ?? JSON.stringify(audit));
+  check("degree audit lists remaining courses", audit?.courses?.filter((c) => c.state === "remaining").length === 2, JSON.stringify(audit?.courses));
+  r = await as(ids.alice, `select public.register_for_section($1) as s`, [s2]);
+  check("completed prerequisite unlocks the next course", r.rows[0]?.s === "enrolled", r.error ?? "");
+  r = await as(ids.alice, `select public.degree_audit($1)`, [ids.bob]);
+  check("students cannot audit someone else", !!r.error, r.error ?? "");
+  check("brief's enrollments view shows only your own rows", (await count(ids.alice, `select * from public.enrollments`)) === (await q1(`select count(*)::int as n from public.class_enrollments where student_id = $1`, [ids.alice]))[0].n);
+
+  // Facilities & reservations
+  const [hall] = await q1(`insert into public.facilities (name, type, capacity) values ('Test Hall', 'lecture_hall', 3) returning id`);
+  const at = (h) => `current_date + time '${h}'`;
+  r = await as(ids.alice, `insert into public.reservations (facility_id, title, starts_at, ends_at) values ($1, 'Study', ${at("10:00")}, ${at("11:00")}) returning id, user_id`, [hall.id]);
+  const resA = r.rows[0]?.id;
+  check("student books a room", !r.error && r.rows[0]?.user_id === ids.alice, r.error ?? "");
+  r = await as(ids.bob, `insert into public.reservations (facility_id, title, starts_at, ends_at) values ($1, 'Clash', ${at("10:30")}, ${at("11:30")})`, [hall.id]);
+  check("overlapping booking is impossible (exclusion constraint)", !!r.error && /reservations_no_overlap|conflicting/i.test(r.error), r.error ?? "");
+  r = await as(ids.bob, `insert into public.reservations (facility_id, title, starts_at, ends_at) values ($1, 'After', ${at("11:00")}, ${at("12:00")})`, [hall.id]);
+  check("back-to-back booking is allowed", !r.error, r.error ?? "");
+  r = await as(ids.bob, `insert into public.reservations (facility_id, title, starts_at, ends_at) values ($1, 'Marathon', ${at("13:00")}, ${at("19:00")})`, [hall.id]);
+  check("students cannot book more than 4 hours", !!r.error, r.error ?? "");
+  r = await as(ids.bob, `update public.reservations set status = 'cancelled' where id = $1 returning id`, [resA]);
+  check("students cannot cancel someone else's booking", r.rows.length === 0, r.error ?? "");
+  await as(ids.alice, `update public.reservations set status = 'cancelled' where id = $1`, [resA]);
+  r = await as(ids.bob, `insert into public.reservations (facility_id, title, starts_at, ends_at) values ($1, 'Freed', ${at("10:00")}, ${at("10:30")})`, [hall.id]);
+  check("cancelled slot can be booked again", !r.error, r.error ?? "");
+
+  // Assets
+  r = await as(ids.teacher, `insert into public.assets (facility_id, name, asset_tag, serial_number, maintenance_interval_days, last_maintained_on) values ($1, 'Projector', 'AT-1', 'SN-9', 30, current_date - 40) returning id`, [hall.id]);
+  const assetId = r.rows[0]?.id;
+  check("staff register an asset with serial number", !r.error, r.error ?? "");
+  check("overdue maintenance is detected", (await count(ids.teacher, `select * from public.assets_due where next_maintenance_on < current_date`)) === 1);
+  await as(ids.teacher, `insert into public.asset_maintenance (asset_id, notes) values ($1, 'Lamp replaced')`, [assetId]);
+  check("logging maintenance resets the schedule", (await count(ids.teacher, `select * from public.assets_due where next_maintenance_on < current_date`)) === 0);
+  check("students cannot see the asset register", (await count(ids.alice, `select * from public.assets`)) === 0);
+  r = await as(ids.teacher, `insert into public.assets (name, asset_tag) values ('Dup', 'AT-1')`);
+  check("asset tags are unique", !!r.error, r.error ?? "");
+
+  // Exam lifecycle
+  const [ex] = await q1(`insert into public.exams (course_name, exam_type, class_id, facility_id) values ('Advanced final', 'Final', $1, $2) returning id`, [s2, hall.id]);
+  r = await as(ids.alice, `select public.generate_exam_seating($1)`, [ex.id]);
+  check("students cannot generate seating", !!r.error, r.error ?? "");
+  r = await as(ids.teacher, `select public.generate_exam_seating($1) as n`, [ex.id]);
+  check("teacher generates randomised seating", r.rows[0]?.n >= 1, r.error ?? "");
+  const seats = await q1(`select seat_label, candidate_number from public.exam_candidates where exam_id = $1`, [ex.id]);
+  check("every candidate gets a unique seat and number", seats.every((s) => s.seat_label && s.candidate_number) && new Set(seats.map((s) => s.seat_label)).size === seats.length, JSON.stringify(seats));
+  r = await as(ids.alice, `select * from public.my_hall_tickets()`);
+  check("student sees own hall ticket with seat", r.rows.length === 1 && !!r.rows[0].seat_label && r.rows[0].score === null, r.error ?? JSON.stringify(r.rows));
+  await as(ids.teacher, `update public.exam_candidates set score = 88 where exam_id = $1`, [ex.id]);
+  check("scores stay hidden until release", (await count(ids.alice, `select * from public.exam_candidates`)) === 0 && (await as(ids.alice, `select score from public.my_hall_tickets()`)).rows[0]?.score === null);
+  await as(ids.teacher, `update public.exams set results_released = true where id = $1`, [ex.id]);
+  check("after release the student sees the score", Number((await as(ids.alice, `select score from public.my_hall_tickets()`)).rows[0]?.score) === 88);
+  check("release notifies candidates", (await count(ids.alice, `select * from public.notifications where title = 'Exam results released'`)) === 1);
+
+  // Credentials
+  r = await as(ids.teacher, `insert into public.badges (name, skills) values ('Robotics Level 1', array['ROS','Kinematics']) returning id`);
+  const badgeId = r.rows[0]?.id;
+  check("teacher defines a badge", !r.error, r.error ?? "");
+  r = await as(ids.alice, `insert into public.badge_awards (badge_id, student_id) values ($1, $2)`, [badgeId, ids.alice]);
+  check("students cannot award themselves badges", !!r.error, r.error ?? "");
+  r = await as(ids.teacher, `insert into public.badge_awards (badge_id, student_id) values ($1, $2) returning verification_code`, [badgeId, ids.alice]);
+  const code = r.rows[0]?.verification_code;
+  check("teacher awards a badge with a verification code", !!code && code.length === 12, r.error ?? "");
+  r = await as(null, `select public.verify_credential($1) as v`, [code.toLowerCase()]);
+  check("anyone can verify the credential (signed out)", r.rows[0]?.v?.valid === true && r.rows[0]?.v?.badge === "Robotics Level 1", r.error ?? JSON.stringify(r.rows));
+  r = await as(null, `select public.verify_credential('NOTAREALCODE') as v`);
+  check("unknown codes are reported invalid", r.rows[0]?.v?.valid === false);
+  r = await as(null, `select * from public.badge_awards`);
+  check("signed-out visitors cannot list awards", r.rows.length === 0);
+
+  // Analytics
+  r = await as(ids.alice, `select public.compute_risk_scores()`);
+  check("students cannot run risk scoring", !!r.error, r.error ?? "");
+  r = await as(ids.teacher, `select public.compute_risk_scores() as n`);
+  check("staff compute retention risk scores", r.rows[0]?.n >= 3, r.error ?? "");
+  const risk = await q1(`select score, factors from public.student_risk_scores where student_id = $1`, [ids.alice]);
+  check("risk factors are explained (attendance, grades, submissions, hold)", risk[0] && "attendance_rate" in risk[0].factors && "financial_hold" in risk[0].factors, JSON.stringify(risk));
+  check("students cannot read risk scores", (await count(ids.alice, `select * from public.student_risk_scores`)) === 0);
+  await q1(`insert into public.admissions (applicant_name, program, status) values ('A1','BSc Test','Enrolled'), ('A2','BSc Test','Approved'), ('A3','BSc Test','Declined'), ('A4','BSc Test','Under Review')`);
+  r = await as(ids.admin, `select * from public.admissions_forecast() where program = 'BSc Test'`);
+  check("admissions forecast predicts enrolments per programme", r.rows.length === 1 && Number(r.rows[0].predicted_enrolments) > 1, r.error ?? JSON.stringify(r.rows));
+  check("forecast is admin-only", (await count(ids.teacher, `select * from public.admissions_forecast()`)) === 0);
+
+  // Private metadata & integrations
+  r = await as(ids.alice, `insert into public.user_metadata (user_id, demographics) values ($1, '{"nationality":"DE"}') returning user_id`, [ids.alice]);
+  check("user stores private metadata", !r.error, r.error ?? "");
+  check("other users cannot read it", (await count(ids.bob, `select * from public.user_metadata`)) === 0);
+  check("teachers cannot read it either", (await count(ids.teacher, `select * from public.user_metadata`)) === 0);
+  check("admins can read it", (await count(ids.admin, `select * from public.user_metadata`)) === 1);
+  r = await as(ids.teacher, `insert into public.webhook_endpoints (url, events) values ('https://example.com/hook', '{*}')`);
+  check("only admins manage webhooks", !!r.error, r.error ?? "");
+  r = await as(ids.admin, `insert into public.webhook_endpoints (url, events) values ('http://insecure.example.com', '{*}')`);
+  check("webhooks must use https", !!r.error, r.error ?? "");
+  check("event log is admin-only", (await count(ids.teacher, `select * from public.event_log`)) === 0 && (await count(ids.admin, `select * from public.event_log`)) > 0);
+
+  // LTI tools
+  r = await as(ids.teacher, `insert into public.lti_tools (name, launch_url) values ('X', 'https://tool.example.com/launch')`);
+  check("only admins register LTI tools", !!r.error, r.error ?? "");
+  r = await as(ids.admin, `insert into public.lti_tools (name, launch_url) values ('X', 'http://tool.example.com/launch')`);
+  check("LTI launch URLs must use https", !!r.error, r.error ?? "");
+  r = await as(ids.admin, `insert into public.lti_tools (name, launch_url) values ('Virtual Lab', 'https://tool.example.com/launch') returning id`);
+  const toolId = r.rows[0]?.id;
+  check("admin registers an LTI tool", !!toolId, r.error ?? "");
+  check("members can list enabled tools", (await count(ids.alice, `select id from public.lti_tools`)) === 1);
+  r = await as(null, `select public.lti_tool_public($1) as t`, [toolId]);
+  const pub = r.rows[0]?.t;
+  check("public launch lookup reveals only non-secret fields", pub && pub.launch_url && !("secret" in pub) && Object.keys(pub).sort().join() === "client_id,deployment_id,id,launch_url", r.error ?? JSON.stringify(pub));
+  await as(ids.admin, `update public.lti_tools set enabled = false where id = $1`, [toolId]);
+  check("disabled tools cannot be launched", (await as(null, `select public.lti_tool_public($1) as t`, [toolId])).rows[0]?.t === null);
+  check("signed-out visitors cannot list LTI tools", (await count(null, `select * from public.lti_tools`)) === 0);
 }
 
 // --- Deactivated account ---

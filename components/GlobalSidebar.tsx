@@ -8,6 +8,7 @@ import {
   ClipboardCheck, Users as UsersIcon, Menu, ChevronLeft,
   Cpu, Briefcase, Library, Ticket, Car, LayoutDashboard, Settings,
   School, UserCheck, BookMarked, Megaphone, Plane, HeartHandshake, X,
+  Layers, Route, DoorOpen, Award, Activity, Plug,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -24,6 +25,8 @@ const NAV: NavItem[] = [
   { path: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { path: "/family", icon: HeartHandshake, label: "My Children", roles: ["parent"] },
   { path: "/announcements", icon: Megaphone, label: "Notice Board" },
+  { path: "/academics", icon: Layers, label: "Courses & Registration", roles: EVERYONE_BUT_PARENTS },
+  { path: "/degree-audit", icon: Route, label: "Degree Audit" },
   { path: "/classes", icon: School, label: "Classes & Timetable", roles: EVERYONE_BUT_PARENTS },
   { path: "/attendance", icon: UserCheck, label: "Attendance", roles: EVERYONE_BUT_PARENTS },
   { path: "/gradebook", icon: BookMarked, label: "Gradebook", roles: EVERYONE_BUT_PARENTS },
@@ -31,6 +34,8 @@ const NAV: NavItem[] = [
   { path: "/exams", icon: ClipboardCheck, label: "Examinations", roles: EVERYONE_BUT_PARENTS },
   { path: "/registrar", icon: GraduationCap, label: "Registrar (SIS)", roles: EVERYONE_BUT_PARENTS },
   { path: "/housing", icon: Building, label: "Housing & Facilities", roles: EVERYONE_BUT_PARENTS },
+  { path: "/facilities", icon: DoorOpen, label: "Rooms & Assets", roles: EVERYONE_BUT_PARENTS },
+  { path: "/credentials", icon: Award, label: "Credentials & Badges" },
   { path: "/chat", icon: MessageSquare, label: "Communications" },
   { path: "/calendar", icon: Calendar, label: "Master Calendar" },
   { path: "/leave", icon: Plane, label: "Leave & Absence" },
@@ -42,6 +47,8 @@ const NAV: NavItem[] = [
   { path: "/tasks", icon: CheckSquare, label: "Task Management", roles: ["owner", "administration", "teacher"] },
   { path: "/admissions", icon: UsersIcon, label: "Admissions CRM", roles: ["owner", "administration"] },
   { path: "/finance", icon: Wallet, label: "Finance & Billing", roles: ["owner", "administration", "student", "parent"] },
+  { path: "/analytics", icon: Activity, label: "Analytics & Risk", roles: ["owner", "administration", "teacher"] },
+  { path: "/integrations", icon: Plug, label: "Integrations & API", roles: ["owner", "administration"] },
   { path: "/admin", icon: Shield, label: "Global Admin", roles: ["owner", "administration"] },
 ];
 
@@ -57,7 +64,7 @@ export default function GlobalSidebar() {
     setMobileOpen(false); // eslint-disable-line react-hooks/set-state-in-effect
   }, [pathname]);
 
-  if (pathname === "/") return null;
+  if (pathname === "/" || pathname.startsWith("/verify")) return null;
 
   const items = NAV.filter((n) => !n.roles || n.roles.includes(role));
   const handleLogout = async () => {

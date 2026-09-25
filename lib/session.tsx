@@ -129,7 +129,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, profile, loading, signOut } = useSession();
   const pathname = usePathname();
   const router = useRouter();
-  const isLogin = pathname === "/";
+  // The login screen and the public credential checker need no account.
+  const isLogin = pathname === "/" || pathname.startsWith("/verify");
   const blocked = !!profile && profile.active === false;
   const mustChange = !!profile?.must_change_password && profile.active !== false;
 

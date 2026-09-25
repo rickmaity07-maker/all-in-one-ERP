@@ -1,5 +1,5 @@
-import { test, expect } from "@playwright/test";
-import { hasOwner, owner, login, watchForErrors, expectNoErrorToast } from "./helpers";
+import { expect } from "@playwright/test";
+import { test, hasOwner, owner, login, watchForErrors, expectNoErrorToast } from "./helpers";
 
 // Every page, opened as the owner: must render its heading area with no crashes,
 // console errors or "Could not load ..." toasts (which usually mean a missing table/column).

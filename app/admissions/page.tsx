@@ -10,7 +10,8 @@ import {
 } from "@/components/ui";
 import { downloadCsv, errorMessage, fmtDate, matches, openStoredFile, removeStoredFile, uploadFile, type Row } from "@/lib/utils";
 
-const STATUSES = ["Under Review", "Awaiting Documents", "Approved", "Rejected"] as const;
+// Enrolled / Declined record the applicant's decision after an offer; the analytics forecast learns yield from them.
+const STATUSES = ["Under Review", "Awaiting Documents", "Approved", "Enrolled", "Declined", "Rejected"] as const;
 const PROGRAMS = ["B.Eng. Mechatronics", "B.Eng. Mechanical", "M.Sc. Mechatronics", "M.Sc. Robotics"];
 const BUCKET = "admission-docs";
 

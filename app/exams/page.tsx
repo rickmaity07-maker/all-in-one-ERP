@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { ClipboardCheck, AlertTriangle, CheckCircle2, Clock, MapPin, ShieldAlert, Plus, Trash2, ShieldX, Check, Search, Eye, Timer } from "lucide-react";
+import { ClipboardCheck, AlertTriangle, CheckCircle2, Clock, MapPin, ShieldAlert, Plus, Trash2, ShieldX, Check, Search, Eye, Timer, Ticket, Pencil } from "lucide-react";
 import { useSession, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Table, Loading, Empty, Badge, StatCard, inputClass, confirmAction } from "@/components/ui";
 import { fmtDate, matches, type Row } from "@/lib/utils";
+import { ExamManager, MyHallTickets } from "@/components/ExamLifecycle";
 
-type TabId = "schedule" | "plagiarism";
+type TabId = "schedule" | "tickets" | "plagiarism";
 const EXAM_STATUSES = ["Upcoming", "In Progress", "Completed", "Cancelled"];
 
 // exam_date is free text in older rows ("Aug 28, 09:00 AM"); new rows store an ISO datetime.
@@ -23,23 +24,35 @@ export default function ExamsPortal() {
   const [search, setSearch] = useState("");
   const exams = useTable("exams", { orderBy: "exam_date", ascending: true });
   const flags = useTable("integrity_flags", { enabled: canManage });
+  const classes = useTable("classes", { orderBy: "name", ascending: true, enabled: canManage });
+  const rooms = useTable("facilities", { orderBy: "name", ascending: true, enabled: canManage });
+  const [managing, setManaging] = useState<Row | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const [modal, setModal] = useState<"" | "exam" | "flag">("");
   const [busy, setBusy] = useState(false);
-  const [exam, setExam] = useState({ course_name: "", exam_date: "", exam_type: "Midterm", location: "Main Hall", duration_minutes: "90" });
+  const blankExam = { course_name: "", exam_date: "", exam_type: "Midterm", location: "Main Hall", duration_minutes: "90", class_id: "", facility_id: "", max_score: "100", blind_grading: true };
+  const [exam, setExam] = useState(blankExam);
   const [flag, setFlag] = useState({ student_name: "", assessment: "", similarity: "", source: "" });
   const [reviewing, setReviewing] = useState<Row | null>(null);
 
   const handleAddExam = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    const row = await exams.insert(
-      { ...exam, duration_minutes: parseInt(exam.duration_minutes) || null, status: "Upcoming" },
-      "Exam published."
-    );
+    const room = rooms.rows.find((r) => r.id === exam.facility_id);
+    const values = {
+      ...exam,
+      location: room?.name ?? exam.location,
+      class_id: exam.class_id || null,
+      facility_id: exam.facility_id || null,
+      max_score: parseFloat(exam.max_score) || 100,
+      duration_minutes: parseInt(exam.duration_minutes) || null,
+    };
+    const row = editingId ? await exams.update(editingId, values, "Exam updated.") : await exams.insert({ ...values, status: "Upcoming" }, "Exam published.");
     setBusy(false);
     if (row) {
-      setExam({ course_name: "", exam_date: "", exam_type: "Midterm", location: "Main Hall", duration_minutes: "90" });
+      setExam(blankExam);
+      setEditingId(null);
       setModal("");
       setActiveTab("schedule");
     }
@@ -67,6 +80,7 @@ export default function ExamsPortal() {
       icon={ClipboardCheck}
       tabs={[
         { id: "schedule", label: canManage ? "Global Exam Schedule" : "My Exam Schedule", group: "Testing Center" },
+        ...(role === "student" ? [{ id: "tickets" as TabId, label: "Hall Tickets & Results", group: "Testing Center" }] : []),
         ...(canManage ? [{ id: "plagiarism" as TabId, label: "Plagiarism & Integrity Alerts", group: "Testing Center" }] : []),
       ]}
       activeTab={activeTab}
@@ -76,20 +90,36 @@ export default function ExamsPortal() {
       searchPlaceholder="Search courses or exam IDs..."
       action={
         canManage && (
-          <ActionButton icon={Plus} onClick={() => setModal(activeTab === "plagiarism" ? "flag" : "exam")}>
+          <ActionButton icon={Plus} onClick={() => { setEditingId(null); setExam(blankExam); setModal(activeTab === "plagiarism" ? "flag" : "exam"); }}>
             {activeTab === "plagiarism" ? "Log Flag" : "Schedule Exam"}
           </ActionButton>
         )
       }
     >
       {modal === "exam" && (
-        <Modal title="Schedule Exam" icon={ClipboardCheck} onClose={() => setModal("")}>
+        <Modal title={editingId ? "Edit Exam" : "Schedule Exam"} icon={ClipboardCheck} onClose={() => { setModal(""); setEditingId(null); }}>
           <form onSubmit={handleAddExam} className="space-y-4">
             <Field label="Course Name"><input required className={inputClass} value={exam.course_name} onChange={(e) => setExam({ ...exam, course_name: e.target.value })} placeholder="e.g. MEC-401 Advanced Kinematics" /></Field>
             <Field label="Exam Date & Time"><input type="datetime-local" required className={inputClass} value={exam.exam_date} onChange={(e) => setExam({ ...exam, exam_date: e.target.value })} /></Field>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Location"><input className={inputClass} value={exam.location} onChange={(e) => setExam({ ...exam, location: e.target.value })} /></Field>
               <Field label="Duration (min)"><input type="number" min="5" className={inputClass} value={exam.duration_minutes} onChange={(e) => setExam({ ...exam, duration_minutes: e.target.value })} /></Field>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="Class (candidates)">
+                <select className={inputClass} value={exam.class_id} onChange={(e) => setExam({ ...exam, class_id: e.target.value })}>
+                  <option value="">— None —</option>
+                  {classes.rows.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Exam Room">
+                <select className={inputClass} value={exam.facility_id} onChange={(e) => setExam({ ...exam, facility_id: e.target.value })}>
+                  <option value="">— Use location text —</option>
+                  {rooms.rows.map((r) => <option key={r.id} value={r.id}>{r.name} ({r.capacity})</option>)}
+                </select>
+              </Field>
+              <Field label="Max Score"><input type="number" min="1" className={inputClass} value={exam.max_score} onChange={(e) => setExam({ ...exam, max_score: e.target.value })} /></Field>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 md:mt-7"><input type="checkbox" checked={exam.blind_grading} onChange={(e) => setExam({ ...exam, blind_grading: e.target.checked })} /> Blind grading</label>
             </div>
             <Field label="Assessment Type">
               <select className={inputClass} value={exam.exam_type} onChange={(e) => setExam({ ...exam, exam_type: e.target.value })}>
@@ -99,7 +129,7 @@ export default function ExamsPortal() {
                 <option value="Oral">Oral Exam</option>
               </select>
             </Field>
-            <SubmitButton busy={busy}>Publish Exam</SubmitButton>
+            <SubmitButton busy={busy}>{editingId ? "Save Exam" : "Publish Exam"}</SubmitButton>
           </form>
         </Modal>
       )}
@@ -117,6 +147,8 @@ export default function ExamsPortal() {
           </form>
         </Modal>
       )}
+
+      {managing && <ExamManager exam={managing} onClose={() => setManaging(null)} onChanged={exams.reload} />}
 
       {reviewing && (
         <Modal title={`Review — ${reviewing.student_name}`} icon={Eye} onClose={() => setReviewing(null)}>
@@ -150,7 +182,9 @@ export default function ExamsPortal() {
         </Modal>
       )}
 
-      {exams.loading ? (
+      {activeTab === "tickets" ? (
+        <MyHallTickets />
+      ) : exams.loading ? (
         <Loading label="Syncing exams with cloud..." />
       ) : activeTab === "schedule" ? (
         <>
@@ -170,6 +204,16 @@ export default function ExamsPortal() {
                         </div>
                         <div className="text-right flex items-center gap-4">
                           <p className="text-sm font-bold text-slate-800">{showDate(x.exam_date)}</p>
+                          {canManage && (
+                            <>
+                              <button onClick={() => setManaging(x)} title="Seating, grading & results" className="text-slate-400 hover:text-indigo-600"><Ticket size={18} /></button>
+                              <button title="Edit exam" onClick={() => {
+                                setEditingId(x.id);
+                                setExam({ course_name: x.course_name, exam_date: x.exam_date ?? "", exam_type: x.exam_type ?? "Midterm", location: x.location ?? "", duration_minutes: x.duration_minutes?.toString() ?? "", class_id: x.class_id ?? "", facility_id: x.facility_id ?? "", max_score: String(x.max_score ?? 100), blind_grading: x.blind_grading ?? true });
+                                setModal("exam");
+                              }} className="text-slate-400 hover:text-indigo-600"><Pencil size={18} /></button>
+                            </>
+                          )}
                           {canManage && (
                             <button onClick={() => confirmAction(`Delete ${x.course_name}?`) && exams.remove(x.id, "Exam removed.")} className="text-slate-400 hover:text-red-500"><Trash2 size={18} /></button>
                           )}

@@ -1,7 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
-import {
-  hasOwner, owner, login, logout, inviteUser, testUser, RUN, expectToast, watchForErrors, capturePrints, printedDocuments, type TestUser,
-} from "./helpers";
+import { expect, type Page } from "@playwright/test";
+import { test, hasOwner, owner, login, logout, inviteUser, testUser, RUN, expectToast, watchForErrors, capturePrints, printedDocuments, type TestUser } from "./helpers";
 
 // Click-tests every module end to end, from the staff side and the student/parent side.
 test.describe.configure({ mode: "serial" });
@@ -519,7 +517,7 @@ test("classes: room and teacher double-booking is refused", async ({ page }) => 
     await page.getByLabel("Starts").fill(start);
     await page.getByLabel("Ends").fill(end);
     await page.getByLabel("Room").fill(room);
-    await page.getByLabel("Term").fill(`E2E-${RUN}`);
+    await page.getByLabel("Term Label").fill(`E2E-${RUN}`);
     await page.getByRole("button", { name: "Save Class" }).click();
   };
   await create(tag("E2E Circuits"), `R-${RUN}`, "09:00", "10:30");

@@ -7,6 +7,11 @@ import { createClient } from "@supabase/supabase-js";
 import { supabase, isSupabaseConfigured, supabaseUrl, supabaseAnonKey } from "@/lib/supabase";
 import { useSession, LOGIN_NOTICE_KEY } from "@/lib/session";
 
+// Single sign-on buttons, e.g. NEXT_PUBLIC_SSO_PROVIDERS="azure,google,saml:school.edu".
+// Each provider must also be enabled in Supabase → Authentication → Providers (SAML needs the Pro plan).
+const SSO = (process.env.NEXT_PUBLIC_SSO_PROVIDERS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+const SSO_LABEL: Record<string, string> = { azure: "Microsoft", google: "Google", keycloak: "Keycloak", workos: "WorkOS" };
+
 const fieldClass =
   "w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-medium";
 
@@ -81,6 +86,15 @@ export default function LoginScreen() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const sso = async (provider: string) => {
+    setErrorMsg("");
+    const redirectTo = `${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/`;
+    const { error } = provider.startsWith("saml:")
+      ? await supabase.auth.signInWithSSO({ domain: provider.slice(5), options: { redirectTo } })
+      : await supabase.auth.signInWithOAuth({ provider: provider as "azure", options: { redirectTo, scopes: provider === "azure" ? "email" : undefined } });
+    if (error) setErrorMsg(error.message);
   };
 
   return (
@@ -161,6 +175,17 @@ export default function LoginScreen() {
               )}
             </button>
           </form>
+
+          {mode === "signin" && SSO.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <p className="text-center text-xs font-bold uppercase tracking-wider text-slate-400">or</p>
+              {SSO.map((p) => (
+                <button key={p} type="button" onClick={() => sso(p)} className="w-full py-3 rounded-2xl border border-slate-200 bg-white text-sm font-bold text-slate-700 hover:bg-slate-50">
+                  Continue with {p.startsWith("saml:") ? `school SSO (${p.slice(5)})` : SSO_LABEL[p] ?? p}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="mt-6 flex items-center justify-between gap-4 text-sm font-semibold">
             <button

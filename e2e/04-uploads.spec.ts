@@ -1,9 +1,9 @@
-import { test, expect, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { createHash, randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hasOwner, owner, login, RUN, expectToast } from "./helpers";
+import { test, hasOwner, owner, login, RUN, expectToast } from "./helpers";
 
 // Every upload button: upload through the UI, open it again through the app's own
 // Open / Play / Read button, download it, and compare the bytes with what we sent.

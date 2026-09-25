@@ -40,10 +40,11 @@ export default function RegistrarPortal() {
   const records = useTable("registrar_records", staff ? {} : { eq: { profile_id: profile?.id ?? "" } });
   const requests = useTable("transcript_requests");
   const [accounts, setAccounts] = useState<Row[]>([]);
+  const [programs, setPrograms] = useState<Row[]>([]);
   const [courses, setCourses] = useState<Row[]>([]);
 
   const [editing, setEditing] = useState<Row | "new" | null>(null);
-  const [form, setForm] = useState({ student_name: "", major: "B.Eng. Mechatronics", gpa: "", student_number: "", profile_id: "", credits_earned: "0", credits_required: "180" });
+  const [form, setForm] = useState({ student_name: "", major: "B.Eng. Mechatronics", gpa: "", student_number: "", profile_id: "", credits_earned: "0", credits_required: "180", program_id: "" });
   const [coursesFor, setCoursesFor] = useState<Row | null>(null);
   const [course, setCourse] = useState({ course_code: "", course_name: "", term: "", credits: "5", grade: "" });
   const [counsel, setCounsel] = useState<Row | null>(null);
@@ -56,6 +57,7 @@ export default function RegistrarPortal() {
 
   useEffect(() => {
     if (staff) supabase.from("profiles").select("id, full_name").eq("role", "student").order("full_name").then(({ data }) => setAccounts(data ?? []));
+    supabase.from("programs").select("id, name").order("name").then(({ data }) => setPrograms(data ?? []));
   }, [staff]);
 
   const loadCourses = async (recordId: string) => {
@@ -82,10 +84,10 @@ export default function RegistrarPortal() {
     setEditing(r);
     setForm(
       r === "new"
-        ? { student_name: "", major: "B.Eng. Mechatronics", gpa: "", student_number: "", profile_id: "", credits_earned: "0", credits_required: "180" }
+        ? { student_name: "", major: "B.Eng. Mechatronics", gpa: "", student_number: "", profile_id: "", credits_earned: "0", credits_required: "180", program_id: "" }
         : {
             student_name: r.student_name, major: r.major ?? "", gpa: String(r.gpa ?? ""), student_number: r.student_number ?? "",
-            profile_id: r.profile_id ?? "", credits_earned: String(r.credits_earned ?? 0), credits_required: String(r.credits_required ?? 180),
+            profile_id: r.profile_id ?? "", credits_earned: String(r.credits_earned ?? 0), credits_required: String(r.credits_required ?? 180), program_id: r.program_id ?? "",
           }
     );
   };
@@ -101,6 +103,7 @@ export default function RegistrarPortal() {
       profile_id: form.profile_id || null,
       credits_earned: parseInt(form.credits_earned) || 0,
       credits_required: parseInt(form.credits_required) || 180,
+      program_id: form.program_id || null,
     };
     const ok = editing === "new" ? await records.insert({ ...values, enrollment_status: "Active" }, "Student added.") : await records.update((editing as Row).id, values, "Record updated.");
     setBusy(false);
@@ -200,6 +203,12 @@ export default function RegistrarPortal() {
               <Field label="Current GPA"><input type="number" step="0.01" min="0" max="4" className={inputClass} value={form.gpa} onChange={(e) => setForm({ ...form, gpa: e.target.value })} /></Field>
             </div>
             <Field label="Major / Program"><input required className={inputClass} value={form.major} onChange={(e) => setForm({ ...form, major: e.target.value })} /></Field>
+            <Field label="Programme (for degree audit)">
+              <select className={inputClass} value={form.program_id} onChange={(e) => setForm({ ...form, program_id: e.target.value, major: form.major || programs.find((p) => p.id === e.target.value)?.name || "" })}>
+                <option value="">— Not assigned —</option>
+                {programs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </Field>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Credits Earned"><input type="number" min="0" className={inputClass} value={form.credits_earned} onChange={(e) => setForm({ ...form, credits_earned: e.target.value })} /></Field>
               <Field label="Credits Required"><input type="number" min="1" className={inputClass} value={form.credits_required} onChange={(e) => setForm({ ...form, credits_required: e.target.value })} /></Field>

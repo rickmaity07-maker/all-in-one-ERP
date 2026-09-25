@@ -9,9 +9,10 @@ import {
   ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Table, Loading, Badge,
   AccessDenied, IconButton, inputClass, confirmAction,
 } from "@/components/ui";
+import { AccountsAdmin, FeeSchedules, MyAccount } from "@/components/StudentAccounts";
 import { downloadCsv, escapeHtml, fmtDate, matches, money, printDocument, localDate, type Row } from "@/lib/utils";
 
-type TabId = "overview" | "invoices" | "expenses";
+type TabId = "overview" | "invoices" | "expenses" | "accounts" | "fees" | "account";
 
 const today = () => localDate();
 const isOverdue = (inv: Row) => inv.status === "Pending" && inv.due_date && inv.due_date < today();
@@ -31,8 +32,9 @@ function printInvoice(inv: Row) {
 }
 
 export default function FinancePortal() {
-  const { role } = useSession();
+  const { role, profile } = useSession();
   const admin = isAdmin(role);
+  const [family, setFamily] = useState<Row[]>([]);
   const [activeTab, setActiveTab] = useState<TabId>(admin ? "overview" : "invoices");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
@@ -45,6 +47,15 @@ export default function FinancePortal() {
   const [busy, setBusy] = useState(false);
   const [inv, setInv] = useState({ student_id: "", student_name: "", description: "Term 1 Tuition Fee", amount: "", due_date: "" });
   const [exp, setExp] = useState({ category: "Payroll", description: "", amount: "", expense_date: today() });
+
+  useEffect(() => {
+    if (role !== "parent" || !profile) return;
+    supabase.from("guardian_links").select("student_id").eq("guardian_id", profile.id).then(async ({ data }) => {
+      const ids = (data ?? []).map((d) => d.student_id);
+      const { data: kids } = ids.length ? await supabase.from("profiles").select("id, full_name").in("id", ids) : { data: [] };
+      setFamily(kids ?? []);
+    });
+  }, [role, profile]);
 
   useEffect(() => {
     if (!admin) return;
@@ -128,8 +139,13 @@ export default function FinancePortal() {
         { id: "overview" as TabId, label: "Overview & Cash Flow", group: "Financial Views" },
         { id: "invoices" as TabId, label: "Student Tuition Invoices", group: "Financial Views" },
         { id: "expenses" as TabId, label: "Expenses & Payroll", group: "Financial Views" },
+        { id: "accounts" as TabId, label: "Student Accounts", group: "Student Ledger" },
+        { id: "fees" as TabId, label: "Fee Schedules", group: "Student Ledger" },
       ]
-    : [{ id: "invoices" as TabId, label: role === "parent" ? "Family Invoices" : "My Invoices", group: "Billing" }];
+    : [
+        { id: "account" as TabId, label: role === "parent" ? "Family Accounts" : "My Account", group: "Billing" },
+        { id: "invoices" as TabId, label: role === "parent" ? "Family Invoices" : "My Invoices", group: "Billing" },
+      ];
 
   return (
     <ModuleShell
@@ -142,7 +158,7 @@ export default function FinancePortal() {
       onSearch={setSearch}
       searchPlaceholder="Search invoices, students, IDs..."
       action={
-        admin && (
+        admin && ["overview", "invoices", "expenses"].includes(activeTab) && (
           <ActionButton icon={Plus} onClick={() => setModal(activeTab === "expenses" ? "expense" : "invoice")}>
             {activeTab === "expenses" ? "Record Expense" : "Generate Invoice"}
           </ActionButton>
@@ -202,7 +218,16 @@ export default function FinancePortal() {
         </Modal>
       )}
 
-      {activeTab === "overview" ? (
+      {activeTab === "accounts" ? (
+        <AccountsAdmin search={search} />
+      ) : activeTab === "fees" ? (
+        <FeeSchedules />
+      ) : activeTab === "account" ? (
+        <MyAccount
+          studentIds={role === "parent" ? family.map((k) => k.id) : profile ? [profile.id] : []}
+          names={Object.fromEntries(role === "parent" ? family.map((k) => [k.id, k.full_name]) : profile ? [[profile.id, profile.full_name]] : [])}
+        />
+      ) : activeTab === "overview" ? (
         <>
           <PageHeading title="Financial Dashboard" subtitle="High-level overview of revenue and outstanding balances." />
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">

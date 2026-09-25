@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
 import { readFileSync, existsSync } from "node:fs";
 
 // Load .env.local so tests see the same settings as the app (Playwright doesn't do this itself).
@@ -8,6 +8,24 @@ if (existsSync(".env.local")) {
     if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
   }
 }
+
+// When testing a deployed copy under a sub-path (GitHub Pages), "/dashboard" must become "/all-in-one-ERP/dashboard".
+const BASE_PATH = process.env.E2E_BASE_URL ? new URL(process.env.E2E_BASE_URL).pathname.replace(/\/$/, "") : "";
+export function withBasePath(page: Page) {
+  const p = page as Page & { __based?: boolean };
+  if (!BASE_PATH || p.__based) return page;
+  p.__based = true;
+  const goto = page.goto.bind(page);
+  page.goto = (url, options) => goto(url.startsWith("/") ? BASE_PATH + url : url, options);
+  return page;
+}
+
+// Use this "test" in specs so every page understands the base path.
+export const test = base.extend({
+  page: async ({ page }, provide) => {
+    await provide(withBasePath(page));
+  },
+});
 
 export type TestUser = { name: string; email: string; password: string };
 
@@ -37,6 +55,7 @@ export function watchForErrors(page: Page) {
 // that is handled here and the new password is stored on the user object for later logins.
 export async function login(page: Page, user: TestUser | string, password?: string) {
   const u: TestUser = typeof user === "string" ? { name: "", email: user, password: password ?? "" } : user;
+  withBasePath(page);
   await page.goto("/");
   await page.getByPlaceholder("Email Address").fill(u.email);
   await page.getByPlaceholder("Password").fill(u.password);

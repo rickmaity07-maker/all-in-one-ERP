@@ -5,6 +5,9 @@ import { defineConfig } from "@playwright/test";
 //   npm run test:e2e              headless
 //   npm run test:e2e -- --headed  watch it click through the app
 //   npm run test:e2e -- --ui      interactive runner with time-travel
+// E2E_BASE_URL runs the suite against a deployed copy (e.g. the GitHub Pages web version).
+const remote = process.env.E2E_BASE_URL;
+
 export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
@@ -13,14 +16,14 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: remote ?? "http://localhost:3000",
     channel: "msedge",
     viewport: { width: 1440, height: 900 },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     launchOptions: { slowMo: Number(process.env.E2E_SLOWMO ?? 0) },
   },
-  webServer: {
+  webServer: remote ? undefined : {
     command: "npm run dev",
     url: "http://localhost:3000",
     reuseExistingServer: true,

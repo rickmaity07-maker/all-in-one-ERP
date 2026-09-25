@@ -3,15 +3,16 @@
 import { useRef, useState } from "react";
 import {
   Plus, BookOpen, Video, FileText, ClipboardList, Users, CloudUpload, PlayCircle, Trash2, Download,
-  GraduationCap, Upload, Inbox, Loader2, CheckCircle2,
+  GraduationCap, Upload, Inbox, Loader2, CheckCircle2, AppWindow,
 } from "lucide-react";
+import LtiTools from "@/components/LtiTools";
 import { supabase } from "@/lib/supabase";
 import { useSession, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Table, Loading, Empty, Badge, inputClass, toast, confirmAction } from "@/components/ui";
 import { errorMessage, fmtDate, fmtDateTime, matches, openExternal, openStoredFile, removeStoredFile, uploadFile, localDate, type Row } from "@/lib/utils";
 
-type TabId = "lectures" | "materials" | "assignments" | "roster";
+type TabId = "lectures" | "materials" | "assignments" | "roster" | "tools";
 const BUCKET = "course-files";
 const SUB_BUCKET = "submissions";
 
@@ -118,6 +119,7 @@ export default function ELearningPortal() {
     { id: "materials" as TabId, label: "Study Materials", icon: FileText, group: "Course Management" },
     { id: "assignments" as TabId, label: "Assignments", icon: ClipboardList, group: "Classroom" },
     ...(staff ? [{ id: "roster" as TabId, label: "Student Roster", icon: Users, group: "Classroom" }] : []),
+    { id: "tools" as TabId, label: "External Tools", icon: AppWindow, group: "Classroom" },
   ];
 
   return (
@@ -227,7 +229,9 @@ export default function ELearningPortal() {
 
       <PageHeading title="Course Workspace" subtitle={staff ? "Manage your course curriculum, upload lectures, and track engagement." : "Watch lectures, download materials and hand in your assignments."} />
 
-      {materials.loading ? (
+      {activeTab === "tools" ? (
+        <LtiTools />
+      ) : materials.loading ? (
         <Loading label="Syncing with database..." />
       ) : activeTab === "lectures" ? (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

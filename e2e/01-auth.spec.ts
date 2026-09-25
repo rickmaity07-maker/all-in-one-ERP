@@ -1,5 +1,5 @@
-import { test, expect } from "@playwright/test";
-import { watchForErrors } from "./helpers";
+import { expect } from "@playwright/test";
+import { test, watchForErrors } from "./helpers";
 
 test.describe("Login & route protection", () => {
   test("login screen renders and reports the database as configured", async ({ page }) => {

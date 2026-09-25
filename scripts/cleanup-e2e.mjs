@@ -17,12 +17,31 @@ const LABELLED = {
   lab_equipment: "name", career_postings: "title", portfolio_items: "title", library_books: "title", clubs: "name",
   campus_events: "title", transport_routes: "name", calendar_events: "event_title", tasks: "task_title",
   admissions: "applicant_name", leave_requests: "reason", registrar_records: "student_name", chat_messages: "message",
+  reservations: "title", assets: "name", badges: "name", fee_schedules: "name", lti_tools: "name", webhook_endpoints: "url",
 };
 
 let total = 0;
+const users = (await (await api("/auth/v1/admin/users?per_page=1000")).json()).users ?? [];
+const testUsers = users.filter((u) => /^e2e\./.test(u.email ?? "") && u.email !== process.env.E2E_OWNER_EMAIL && !/^e2e\.owner@/.test(u.email));
+// Billing rows of test students (the ledger is append-only for everyone except the service role).
+for (const u of testUsers) {
+  for (const acct of await (await api(`/rest/v1/student_accounts?student_id=eq.${u.id}&select=id`)).json()) {
+    await api(`/rest/v1/ledger_entries?account_id=eq.${acct.id}`, { method: "DELETE" });
+    await api(`/rest/v1/payment_plans?account_id=eq.${acct.id}`, { method: "DELETE" });
+    await api(`/rest/v1/student_accounts?id=eq.${acct.id}`, { method: "DELETE" });
+  }
+}
 for (const [table, col] of Object.entries(LABELLED)) {
   const res = await api(`/rest/v1/${table}?${col}=ilike.*E2E*`, { method: "DELETE" });
   const rows = res.ok ? await res.json() : [];
+  if (rows.length) console.log(`${table.padEnd(22)} ${rows.length} removed`);
+  total += rows.length;
+}
+// Catalogue rows (after the classes, exams and ledger entries that point at them).
+for (const [table, col] of [["courses", "title"], ["programs", "name"], ["terms", "name"], ["facilities", "name"]]) {
+  const res = await api(`/rest/v1/${table}?${col}=ilike.*E2E*`, { method: "DELETE" });
+  const rows = res.ok ? await res.json() : [];
+  if (!res.ok) console.log(`${table}: ${await res.text()}`);
   if (rows.length) console.log(`${table.padEnd(22)} ${rows.length} removed`);
   total += rows.length;
 }
@@ -33,9 +52,9 @@ for (const pattern of ["Hello from the teacher*", "handout-*", "*📎 handout*"]
 }
 
 // Test accounts (keeps the E2E Test Owner, which the tests sign in with).
-const users = (await (await api("/auth/v1/admin/users?per_page=1000")).json()).users ?? [];
-for (const u of users.filter((u) => /^e2e\./.test(u.email ?? "") && u.email !== process.env.E2E_OWNER_EMAIL && !/^e2e\.owner@/.test(u.email))) {
-  for (const [table, col] of [["notifications", "user_id"], ["guardian_links", "guardian_id"], ["guardian_links", "student_id"], ["class_enrollments", "student_id"],
+for (const u of testUsers) {
+  for (const [table, col] of [["aid_awards", "student_id"], ["badge_awards", "student_id"], ["exam_candidates", "student_id"], ["user_metadata", "user_id"],
+    ["student_risk_scores", "student_id"], ["reservations", "user_id"], ["notifications", "user_id"], ["guardian_links", "guardian_id"], ["guardian_links", "student_id"], ["class_enrollments", "student_id"],
     ["attendance", "student_id"], ["grades", "student_id"], ["assignment_submissions", "student_id"], ["leave_requests", "requester_id"],
     ["housing_assignments", "resident_id"], ["meal_accounts", "profile_id"], ["password_reset_requests", "profile_id"], ["profiles", "id"]]) {
     await api(`/rest/v1/${table}?${col}=eq.${u.id}`, { method: "DELETE" });

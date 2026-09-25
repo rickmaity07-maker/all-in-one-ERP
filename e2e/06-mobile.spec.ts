@@ -1,5 +1,5 @@
-import { test, expect } from "@playwright/test";
-import { hasOwner, owner, login, watchForErrors } from "./helpers";
+import { expect } from "@playwright/test";
+import { test, hasOwner, owner, login, watchForErrors } from "./helpers";
 
 // The web version on a phone: nothing may be wider than the screen, and the menu must work.
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
@@ -10,6 +10,7 @@ const ROUTES = [
   "/dashboard", "/announcements", "/classes", "/attendance", "/gradebook", "/e-learning", "/exams",
   "/registrar", "/housing", "/chat", "/calendar", "/leave", "/makerspace", "/careers", "/library",
   "/campus-life", "/logistics", "/tasks", "/admissions", "/finance", "/admin", "/settings",
+  "/academics", "/degree-audit", "/facilities", "/credentials", "/analytics", "/integrations", "/verify",
 ];
 
 test("login screen fits a phone", async ({ page }) => {
