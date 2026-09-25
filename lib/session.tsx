@@ -128,7 +128,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     try {
       if (id) localStorage.removeItem(PROFILE_CACHE + id);
     } catch {}
-    await supabase.auth.signOut();
+    // This device only: the default ("global") would also sign the person out on their phone,
+    // the web version and every other device at the same time.
+    await supabase.auth.signOut({ scope: "local" });
     setUser(null);
     setProfile(null);
   }, []);

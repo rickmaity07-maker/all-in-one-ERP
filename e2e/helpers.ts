@@ -97,7 +97,10 @@ let deskPage: Page | null = null;
 export async function desktopAppPage(): Promise<Page> {
   if (deskPage && !deskPage.isClosed()) return deskPage;
   try { execSync(`powershell -NoProfile -Command "Get-Process app -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*all-in-one-erp*' } | Stop-Process -Force"`); } catch {}
-  spawn(DESKTOP_EXE, [], { detached: true, stdio: "ignore", env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}` } }).unref();
+  spawn(DESKTOP_EXE, [], { detached: true, stdio: "ignore", env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
+    // Keep rendering when the window is covered by other windows (WebView2 otherwise pauses drawing, and
+    // clicks wait forever for the page to settle) — the same switches Playwright uses for its own browsers.
+    `--remote-debugging-port=${CDP_PORT} --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling --disable-features=CalculateNativeWinOcclusion` } }).unref();
   for (let i = 0; i < 60 && !deskPage; i++) {
     await new Promise((r) => setTimeout(r, 1000));
     try {
@@ -139,6 +142,13 @@ export const test = base.extend({
       return;
     }
     const app = onAndroid ? await androidPage() : await desktopAppPage();
+    if (!(app as Page & { __confirmStub?: boolean }).__confirmStub) {
+      // Every test answers "OK" to confirmation boxes. Attached to a native app, Playwright can miss the
+      // native dialog and the page stays frozen, so the apps answer "OK" themselves during tests.
+      // (Real dialogs are exercised by the browser runs and were checked by hand in the desktop app.)
+      await app.addInitScript(() => { window.confirm = () => true; });
+      (app as Page & { __confirmStub?: boolean }).__confirmStub = true;
+    }
     await returnToApp(); // the app must be in front, or its WebView stops drawing
     // Each test starts signed out on the login screen, like a fresh browser context.
     await app.goto("/");
@@ -239,6 +249,8 @@ export function watchForErrors(page: Page) {
     if (r.status() >= 400) failed.push(`${r.status()} ${r.request().method()} ${r.url().split("?")[0]}`);
   });
   page.on("console", (m) => {
+    // Logging out a session the server has already ended answers 401/403/404: harmless, not an app error.
+    if (/Failed to load resource/.test(m.text()) && /\/auth\/v1\/logout/.test(failed.at(-1) ?? "")) return;
     // ERR_NETWORK_CHANGED: the device's network reconnected (emulators do this); not an app error.
     if (m.type() === "error" && !/favicon|Download the React DevTools|\[Fast Refresh\]|ERR_NETWORK_CHANGED/i.test(m.text())) problems.push(`console: ${m.text()}${/Failed to load resource/.test(m.text()) && failed.length ? ` [${failed.at(-1)}]` : ""}`);
   });
