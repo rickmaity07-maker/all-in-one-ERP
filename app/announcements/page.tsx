@@ -89,11 +89,11 @@ export default function Announcements() {
             const canEdit = isAdmin(role) || p.author_id === profile?.id;
             return (
               <article key={p.id} className={`bg-white rounded-3xl p-6 border shadow-sm ${p.pinned ? "border-indigo-200 ring-1 ring-indigo-100" : "border-slate-100"}`}>
-                <div className="flex justify-between items-start gap-4 mb-3">
-                  <div className="flex items-center gap-3">
-                    <span className="w-10 h-10 rounded-full bg-linear-to-br from-[#2A0845] to-[#6441A5] text-white text-xs font-bold flex items-center justify-center">{initials(p.author_name)}</span>
-                    <div>
-                      <h3 className="font-black text-slate-800 text-lg flex items-center gap-2">{p.pinned && <Pin size={16} className="text-indigo-500" />} {p.title}</h3>
+                <div className="flex flex-wrap justify-between items-start gap-3 mb-3">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <span className="shrink-0 w-10 h-10 rounded-full bg-linear-to-br from-[#2A0845] to-[#6441A5] text-white text-xs font-bold flex items-center justify-center">{initials(p.author_name)}</span>
+                    <div className="min-w-0">
+                      <h3 className="font-black text-slate-800 text-lg [overflow-wrap:anywhere]">{p.pinned && <Pin size={16} className="text-indigo-500 inline mr-2 -mt-1" />}{p.title}</h3>
                       <p className="text-xs text-slate-400">{p.author_name} • {fmtDateTime(p.created_at)}</p>
                     </div>
                   </div>
@@ -107,7 +107,7 @@ export default function Announcements() {
                     )}
                   </div>
                 </div>
-                <p className="text-slate-600 whitespace-pre-wrap leading-relaxed">{p.body}</p>
+                <p className="text-slate-600 whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">{p.body}</p>
               </article>
             );
           })}

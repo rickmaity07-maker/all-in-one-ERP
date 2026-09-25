@@ -106,8 +106,8 @@ export default function Dashboard() {
                     <div className="space-y-3">
                       {notices.map((n) => (
                         <div key={n.id} className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50">
-                          <p className="font-bold text-slate-800 text-sm flex items-center gap-2">{n.pinned ? <Pin size={14} className="text-indigo-500" /> : <Megaphone size={14} className="text-slate-400" />} {n.title}</p>
-                          <p className="text-xs text-slate-500 mt-1 line-clamp-2">{n.body}</p>
+                          <p className="font-bold text-slate-800 text-sm flex items-start gap-2"><span className="shrink-0 mt-0.5">{n.pinned ? <Pin size={14} className="text-indigo-500" /> : <Megaphone size={14} className="text-slate-400" />}</span><span className="min-w-0 [overflow-wrap:anywhere]">{n.title}</span></p>
+                          <p className="text-xs text-slate-500 mt-1 line-clamp-2 [overflow-wrap:anywhere]">{n.body}</p>
                         </div>
                       ))}
                     </div>

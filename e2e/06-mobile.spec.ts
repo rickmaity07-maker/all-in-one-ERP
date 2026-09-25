@@ -23,6 +23,14 @@ test("login screen fits a phone", async ({ page }) => {
 test("every page fits a phone screen and the menu works", async ({ page }) => {
   const errors = watchForErrors(page);
   await login(page, owner);
+  // Long unbroken text must wrap instead of pushing the page sideways.
+  const longTitle = `E2E-${"W".repeat(60)}-${Date.now()}`;
+  await page.goto("/announcements");
+  await page.getByRole("button", { name: "New Announcement" }).last().click();
+  await page.getByRole("dialog").getByLabel("Title").fill(longTitle);
+  await page.getByRole("dialog").getByLabel("Message").fill("x".repeat(120));
+  await page.getByRole("dialog").getByRole("button", { name: "Post" }).click();
+  await expect(page.getByText(longTitle)).toBeVisible();
   const wide: string[] = [];
   for (const route of ROUTES) {
     await page.goto(route);
@@ -36,6 +44,10 @@ test("every page fits a phone screen and the menu works", async ({ page }) => {
     });
     if (overflow > 1) wide.push(`${route}: ${overflow}px too wide`);
   }
+  await page.goto("/announcements");
+  page.once("dialog", (d) => d.accept());
+  await page.locator("article").filter({ hasText: longTitle }).getByTitle("Delete").click();
+  await expect(page.getByText(longTitle)).toHaveCount(0);
   expect(wide, wide.join("\n")).toEqual([]);
 
   // Hamburger menu → navigate
