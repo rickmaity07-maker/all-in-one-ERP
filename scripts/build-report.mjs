@@ -168,6 +168,8 @@ ${[
   ["Security", "High-severity advisory in an image library (sharp)", "Dependency updated; npm audit reports 0 vulnerabilities"],
   ["Computer", "Notification panel was hidden behind the sidebar's edge on wide screens", "Panel positioned on screen next to the bell; test checks it is really visible"],
   ["All", "Sign-in failures showed the cryptic \"Failed to fetch\"", "Clear message about the connection or too many sign-ins on the network"],
+  ["Tablet", "The update notice appeared a few seconds after a page loaded and pushed the page down, so a tap could land on the wrong control", "Notice floats in a corner instead"],
+  ["Tablet", "The floating update notice could cover a button at the very bottom of a page", "Pages get extra space at the bottom while the notice is showing"],
 ].map(([w, p, f]) => `<tr><td>${w}</td><td>${p}</td><td>${f}</td></tr>`).join("")}
 </tbody></table></section>
 <section class="page"><h2>Features</h2><div class="cols">${FEATURES.map(([g, items]) => `<div><h3>${esc(g)}</h3><ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>`).join("")}</div></section>

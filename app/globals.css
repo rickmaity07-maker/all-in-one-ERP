@@ -6,3 +6,8 @@
 .hide-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* While the floating update notice is up, leave room under the page so it never sits on top of a button. */
+html[data-update-notice] main {
+  padding-bottom: 7rem;
+}

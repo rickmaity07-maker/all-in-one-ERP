@@ -25,6 +25,14 @@ export default function UpdateBanner() {
     };
   }, []);
 
+  const shown =
+    (status.state === "available" && dismissed !== status.version) ||
+    status.state === "apk-opened" || status.state === "downloading" || status.state === "installing";
+  useEffect(() => {
+    document.documentElement.toggleAttribute("data-update-notice", shown);
+    return () => document.documentElement.removeAttribute("data-update-notice");
+  }, [shown]);
+
   if (status.state === "available" && dismissed !== status.version) {
     return (
       <div role="status" className="fixed z-40 left-4 right-4 bottom-4 md:left-24 md:right-auto md:max-w-sm rounded-2xl shadow-2xl bg-emerald-600 text-white text-sm font-semibold flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
