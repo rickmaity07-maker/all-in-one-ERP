@@ -17,6 +17,8 @@ export default function ChatPortal() {
   const me = profile!;
   const [channels, setChannels] = useState<Row[]>([]);
   const [people, setPeople] = useState<Row[]>([]);
+  // Who has the app open right now (Supabase Realtime presence).
+  const [online, setOnline] = useState<Set<string>>(new Set());
   const [messages, setMessages] = useState<Row[]>([]);
   const [activeChannel, setActiveChannel] = useState("general");
   const [newMessage, setNewMessage] = useState("");
@@ -43,6 +45,18 @@ export default function ChatPortal() {
   useEffect(() => {
     supabase.from("chat_channels").select("*").order("name").then(({ data }) => setChannels(data ?? []));
     supabase.from("profiles").select("id, full_name, role").neq("id", me.id).order("full_name").then(({ data }) => setPeople(data ?? []));
+  }, [me.id]);
+
+  useEffect(() => {
+    const presence = supabase.channel("presence:erp", { config: { presence: { key: me.id } } });
+    presence
+      .on("presence", { event: "sync" }, () => setOnline(new Set(Object.keys(presence.presenceState()))))
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") await presence.track({ online_at: new Date().toISOString() });
+      });
+    return () => {
+      supabase.removeChannel(presence);
+    };
   }, [me.id]);
 
   // Load history and subscribe to new/deleted messages for the active room.
@@ -209,8 +223,12 @@ export default function ChatPortal() {
                       onClick={() => openChannel(ch)}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-xl transition-all ${activeChannel === ch ? "bg-linear-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-sm font-bold" : "text-slate-600 hover:bg-slate-50 font-semibold"}`}
                     >
-                      <div className="w-8 h-8 rounded-full bg-linear-to-br from-pink-400 to-orange-400 flex items-center justify-center text-white font-bold text-xs shadow-sm shrink-0">{initials(p.full_name)}</div>
+                      <div className="relative w-8 h-8 rounded-full bg-linear-to-br from-pink-400 to-orange-400 flex items-center justify-center text-white font-bold text-xs shadow-sm shrink-0">
+                        {initials(p.full_name)}
+                        {online.has(p.id) && <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white" title="Online now" />}
+                      </div>
                       <span className="truncate">{p.full_name}</span>
+                      {online.has(p.id) && <span className="sr-only">online</span>}
                       <span className="ml-auto text-[9px] uppercase text-slate-400">{p.role}</span>
                     </button>
                   </li>
@@ -242,9 +260,9 @@ export default function ChatPortal() {
               {!isDM ? <Hash size={20} className="text-blue-500" /> : <div className="w-6 h-6 rounded-full bg-slate-800 text-white flex items-center justify-center text-[10px]">{initials(title)}</div>}
               {title}
             </h2>
-            <p className="text-xs font-medium text-slate-500">{isDM ? `Private conversation with ${title}` : channelInfo?.description || `Team chatter and updates for #${activeChannel}`}</p>
+            <p className="text-xs font-medium text-slate-500">{isDM ? `Private conversation with ${title} • ${dmPartner && online.has(dmPartner.id) ? "online now" : "offline"}` : channelInfo?.description || `Team chatter and updates for #${activeChannel}`}</p>
           </div>
-          <span className="text-xs font-bold text-emerald-600 flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Live</span>
+          <span className="text-xs font-bold text-emerald-600 flex items-center gap-1.5" aria-label={`${Math.max(0, online.size - 1)} other people online`}><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Live • {Math.max(0, online.size - 1)} online</span>
         </header>
 
         <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">

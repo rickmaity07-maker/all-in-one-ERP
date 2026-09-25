@@ -2241,3 +2241,734 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke execute on function public.section_seats() from public, anon;
 grant execute on function public.section_seats() to authenticated;
+
+-- =====================================================================
+-- 11. INSTITUTIONAL & ENTERPRISE MODULES
+--     Research & grants, faculty lifecycle (HCM), advancement & alumni, procurement,
+--     compliance & accreditation, and hardware-ready facility devices.
+--     Every record links back to profiles (people) and departments.
+-- =====================================================================
+
+-- ---------- Roles: alumni ----------
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check
+  check (role in ('owner', 'administration', 'teacher', 'student', 'parent', 'alumni'));
+-- Alumni are not "members" of the school's internal data (courses, chat, records); they get the
+-- advancement portal and their own records only.
+create or replace function public.is_member() returns boolean
+language sql stable as $$ select public.app_role() not in ('none', 'alumni') $$;
+create or replace function public.is_alumni() returns boolean
+language sql stable as $$ select public.app_role() = 'alumni' $$;
+
+-- ---------- Departments & budgets (shared by grants, labour distribution and procurement) ----------
+create table if not exists public.departments (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  code text unique,
+  head_id uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.budgets (
+  id uuid primary key default gen_random_uuid(),
+  department_id uuid not null references public.departments(id) on delete cascade,
+  fiscal_year int not null check (fiscal_year between 2000 and 2100),
+  amount numeric not null check (amount >= 0),
+  created_at timestamptz not null default now(),
+  unique (department_id, fiscal_year)
+);
+
+-- ---------- Research & grants administration ----------
+create table if not exists public.grants (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  sponsor_name text not null,
+  principal_investigator uuid references public.profiles(id) on delete set null,
+  department_id uuid references public.departments(id) on delete set null,
+  total_amount numeric not null check (total_amount > 0),
+  start_date date not null,
+  end_date date not null,
+  status text not null default 'proposal' check (status in ('proposal', 'submitted', 'awarded', 'active', 'closed', 'declined')),
+  -- e.g. {"allowed_categories": ["equipment","travel","personnel"], "category_caps": {"travel": 5000}}
+  restriction_rules jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  check (end_date > start_date)
+);
+create table if not exists public.grant_expenditures (
+  id uuid primary key default gen_random_uuid(),
+  grant_id uuid not null references public.grants(id) on delete cascade,
+  category text not null,
+  amount numeric not null check (amount > 0),
+  description text not null,
+  spent_on date not null default current_date,
+  created_by uuid default auth.uid(),
+  created_at timestamptz not null default now()
+);
+-- Restricted-fund accounting: every expense must respect the sponsor's rules.
+create or replace function public.check_grant_expenditure() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare g record; spent numeric; cat_spent numeric; cap numeric; allowed jsonb;
+begin
+  select * into g from public.grants where id = new.grant_id;
+  if g.status not in ('awarded', 'active') then raise exception 'Spending is only allowed on awarded or active grants.'; end if;
+  if new.spent_on < g.start_date or new.spent_on > g.end_date then raise exception 'The expense date is outside the grant period (% to %).', g.start_date, g.end_date; end if;
+  allowed := g.restriction_rules -> 'allowed_categories';
+  if allowed is not null and jsonb_typeof(allowed) = 'array' and not (allowed ? new.category) then
+    raise exception 'The sponsor does not allow spending on "%" for this grant.', new.category;
+  end if;
+  select coalesce(sum(amount), 0) into spent from public.grant_expenditures where grant_id = new.grant_id and id <> new.id;
+  if spent + new.amount > g.total_amount then raise exception 'This would overspend the grant (remaining %).', g.total_amount - spent; end if;
+  cap := (g.restriction_rules -> 'category_caps' ->> new.category)::numeric;
+  if cap is not null then
+    select coalesce(sum(amount), 0) into cat_spent from public.grant_expenditures where grant_id = new.grant_id and category = new.category and id <> new.id;
+    if cat_spent + new.amount > cap then raise exception 'The sponsor caps "%" at % (already spent %).', new.category, cap, cat_spent; end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists grant_expenditure_check on public.grant_expenditures;
+create trigger grant_expenditure_check before insert or update on public.grant_expenditures for each row execute function public.check_grant_expenditure();
+
+drop view if exists public.grant_balances;
+create view public.grant_balances with (security_invoker = true) as
+  select g.id as grant_id, g.total_amount, coalesce(sum(e.amount), 0) as spent, g.total_amount - coalesce(sum(e.amount), 0) as remaining
+  from public.grants g left join public.grant_expenditures e on e.grant_id = g.id group by g.id;
+
+create table if not exists public.effort_certifications (
+  id uuid primary key default gen_random_uuid(),
+  grant_id uuid not null references public.grants(id) on delete cascade,
+  person_id uuid not null references public.profiles(id) on delete cascade,
+  period text not null,
+  percent_effort numeric not null check (percent_effort > 0 and percent_effort <= 100),
+  certified_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (grant_id, person_id, period)
+);
+-- A person's effort across all grants in a period can't exceed 100 %.
+create or replace function public.check_effort_total() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare total numeric;
+begin
+  select coalesce(sum(percent_effort), 0) into total from public.effort_certifications
+    where person_id = new.person_id and period = new.period and id <> new.id;
+  if total + new.percent_effort > 100 then raise exception 'Effort for % would exceed 100%% (already %%%).', new.period, total; end if;
+  return new;
+end $$;
+drop trigger if exists effort_total_check on public.effort_certifications;
+create trigger effort_total_check before insert or update on public.effort_certifications for each row execute function public.check_effort_total();
+
+-- ---------- Faculty lifecycle (HCM) ----------
+create table if not exists public.faculty_dossiers (
+  id uuid primary key default gen_random_uuid(),
+  faculty_id uuid not null unique references public.profiles(id) on delete cascade,
+  department_id uuid references public.departments(id) on delete set null,
+  rank text not null default 'assistant' check (rank in ('lecturer', 'assistant', 'associate', 'full')),
+  tenure_status text not null default 'tenure_track' check (tenure_status in ('non_tenure', 'tenure_track', 'under_review', 'tenured', 'denied')),
+  tenure_clock_start date,
+  publications jsonb not null default '[]'::jsonb,
+  service_records jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.tenure_reviews (
+  id uuid primary key default gen_random_uuid(),
+  dossier_id uuid not null references public.faculty_dossiers(id) on delete cascade,
+  stage text not null check (stage in ('department', 'college', 'provost', 'board')),
+  decision text not null default 'pending' check (decision in ('pending', 'recommend', 'not_recommend', 'approved', 'denied')),
+  notes text,
+  decided_by uuid,
+  decided_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (dossier_id, stage)
+);
+-- The review moves stage by stage; the board's decision settles tenure.
+create or replace function public.on_tenure_decision() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare d record; next_stage text;
+begin
+  if new.decision = 'pending' or new.decision = old.decision then return new; end if;
+  if new.stage = 'board' and new.decision not in ('approved', 'denied') then raise exception 'The board approves or denies.'; end if;
+  if new.stage <> 'board' and new.decision not in ('recommend', 'not_recommend') then raise exception 'Earlier stages recommend or not.'; end if;
+  new.decided_by := auth.uid();
+  new.decided_at := now();
+  select * into d from public.faculty_dossiers where id = new.dossier_id;
+  if new.stage = 'board' then
+    update public.faculty_dossiers set tenure_status = case when new.decision = 'approved' then 'tenured' else 'denied' end,
+      rank = case when new.decision = 'approved' and rank = 'assistant' then 'associate' else rank end where id = d.id;
+    perform public.notify_user(d.faculty_id, 'Tenure decision', 'The board has ' || new.decision || ' your tenure case.', '/faculty');
+    perform public.emit_event('faculty.tenure_decided', d.faculty_id, jsonb_build_object('decision', new.decision));
+  else
+    next_stage := case new.stage when 'department' then 'college' when 'college' then 'provost' when 'provost' then 'board' end;
+    insert into public.tenure_reviews (dossier_id, stage) values (d.id, next_stage) on conflict (dossier_id, stage) do nothing;
+  end if;
+  return new;
+end $$;
+drop trigger if exists tenure_decision on public.tenure_reviews;
+create trigger tenure_decision before update on public.tenure_reviews for each row execute function public.on_tenure_decision();
+
+create or replace function public.open_tenure_review(p_dossier uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Administrators only.'; end if;
+  update public.faculty_dossiers set tenure_status = 'under_review' where id = p_dossier and tenure_status = 'tenure_track';
+  if not found then raise exception 'Only tenure-track dossiers can go to review.'; end if;
+  insert into public.tenure_reviews (dossier_id, stage) values (p_dossier, 'department') on conflict do nothing;
+end $$;
+
+create table if not exists public.sabbaticals (
+  id uuid primary key default gen_random_uuid(),
+  faculty_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  starts_on date not null,
+  ends_on date not null,
+  plan text not null,
+  status text not null default 'requested' check (status in ('requested', 'approved', 'rejected', 'completed')),
+  created_at timestamptz not null default now(),
+  check (ends_on > starts_on)
+);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'sabbaticals_no_overlap') then
+    alter table public.sabbaticals add constraint sabbaticals_no_overlap
+      exclude using gist (faculty_id with =, daterange(starts_on, ends_on, '[]') with &&) where (status in ('requested', 'approved'));
+  end if;
+end $$;
+-- Eligibility: tenured faculty, or six years on the tenure clock.
+create or replace function public.check_sabbatical() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare d record;
+begin
+  select * into d from public.faculty_dossiers where faculty_id = new.faculty_id;
+  if d.id is null then raise exception 'No faculty dossier on file.'; end if;
+  if d.tenure_status <> 'tenured' and (d.tenure_clock_start is null or d.tenure_clock_start > (new.starts_on - interval '6 years')::date) then
+    raise exception 'Sabbaticals need tenure or six years of service.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists sabbatical_check on public.sabbaticals;
+create trigger sabbatical_check before insert on public.sabbaticals for each row execute function public.check_sabbatical();
+
+create table if not exists public.labor_distributions (
+  id uuid primary key default gen_random_uuid(),
+  faculty_id uuid not null references public.profiles(id) on delete cascade,
+  grant_id uuid references public.grants(id) on delete cascade,
+  department_id uuid references public.departments(id) on delete cascade,
+  percent numeric not null check (percent > 0 and percent <= 100),
+  effective_from date not null default current_date,
+  effective_to date,
+  created_at timestamptz not null default now(),
+  check ((grant_id is null) <> (department_id is null))
+);
+-- Multi-source payroll: the splits in force at any moment must not exceed 100 %.
+create or replace function public.check_labor_split() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare total numeric;
+begin
+  select coalesce(sum(percent), 0) into total from public.labor_distributions l
+    where l.faculty_id = new.faculty_id and l.id <> new.id
+      and daterange(l.effective_from, l.effective_to, '[]') && daterange(new.effective_from, new.effective_to, '[]');
+  if total + new.percent > 100 then raise exception 'Pay splits would total more than 100%% (already %%%).', total; end if;
+  return new;
+end $$;
+drop trigger if exists labor_split_check on public.labor_distributions;
+create trigger labor_split_check before insert or update on public.labor_distributions for each row execute function public.check_labor_split();
+
+-- ---------- Advancement & alumni ----------
+create table if not exists public.campaigns (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  goal numeric not null check (goal > 0),
+  fund text not null default 'General Fund',
+  starts_on date not null default current_date,
+  ends_on date,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.alumni_donations (
+  id uuid primary key default gen_random_uuid(),
+  alumni_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  campaign_id uuid references public.campaigns(id) on delete set null,
+  amount numeric not null check (amount > 0),
+  paid_amount numeric not null default 0 check (paid_amount >= 0),
+  pledge_status text not null default 'pledged' check (pledge_status in ('pledged', 'partially_paid', 'paid', 'cancelled')),
+  allocated_fund text,
+  due_on date,
+  created_at timestamptz not null default now()
+);
+create or replace function public.before_donation() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  new.allocated_fund := coalesce(new.allocated_fund, (select fund from public.campaigns where id = new.campaign_id), 'General Fund');
+  new.paid_amount := 0;
+  new.pledge_status := 'pledged';
+  return new;
+end $$;
+drop trigger if exists donation_before on public.alumni_donations;
+create trigger donation_before before insert on public.alumni_donations for each row execute function public.before_donation();
+-- Donors may only cancel an untouched pledge; amounts and payment status change through payments.
+create or replace function public.guard_donation() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if public.is_admin() or pg_trigger_depth() > 1 then return new; end if;
+  if new.amount <> old.amount or new.paid_amount <> old.paid_amount or new.alumni_id <> old.alumni_id
+     or not (new.pledge_status = old.pledge_status or (old.pledge_status = 'pledged' and new.pledge_status = 'cancelled')) then
+    raise exception 'Pledges can only be cancelled before any payment.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists donation_guard on public.alumni_donations;
+create trigger donation_guard before update on public.alumni_donations for each row execute function public.guard_donation();
+
+create table if not exists public.pledge_payments (
+  id uuid primary key default gen_random_uuid(),
+  donation_id uuid not null references public.alumni_donations(id) on delete cascade,
+  amount numeric not null check (amount > 0),
+  method text not null default 'card',
+  paid_on date not null default current_date,
+  receipt_no text not null unique default 'R-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10)),
+  created_at timestamptz not null default now()
+);
+-- Pledge invoicing: each payment updates the pledge and never overpays it.
+create or replace function public.on_pledge_payment() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare d record;
+begin
+  select * into d from public.alumni_donations where id = new.donation_id for update;
+  if d.pledge_status = 'cancelled' then raise exception 'This pledge was cancelled.'; end if;
+  if d.paid_amount + new.amount > d.amount then raise exception 'Payment exceeds the outstanding pledge (%).', d.amount - d.paid_amount; end if;
+  update public.alumni_donations set paid_amount = d.paid_amount + new.amount,
+    pledge_status = case when d.paid_amount + new.amount >= d.amount then 'paid' else 'partially_paid' end where id = d.id;
+  perform public.notify_user(d.alumni_id, 'Thank you for your gift', 'Receipt ' || new.receipt_no || ' for ' || new.amount, '/advancement');
+  perform public.emit_event('advancement.payment_received', d.alumni_id, jsonb_build_object('amount', new.amount, 'campaign_id', d.campaign_id));
+  return new;
+end $$;
+drop trigger if exists pledge_payment_after on public.pledge_payments;
+create trigger pledge_payment_after before insert on public.pledge_payments for each row execute function public.on_pledge_payment();
+
+drop view if exists public.campaign_progress;
+create view public.campaign_progress with (security_invoker = true) as
+  select c.id as campaign_id, c.goal,
+    coalesce(sum(d.amount) filter (where d.pledge_status <> 'cancelled'), 0) as pledged,
+    coalesce(sum(d.paid_amount), 0) as raised,
+    count(distinct d.alumni_id) filter (where d.pledge_status <> 'cancelled') as donors
+  from public.campaigns c left join public.alumni_donations d on d.campaign_id = c.id group by c.id;
+-- Totals for every campaign regardless of who is asking (the view above only counts gifts the viewer may see).
+create or replace function public.campaign_totals() returns table (campaign_id uuid, pledged numeric, raised numeric, donors int)
+language sql stable security definer set search_path = public as $$
+  select c.id, coalesce(sum(d.amount) filter (where d.pledge_status <> 'cancelled'), 0), coalesce(sum(d.paid_amount), 0),
+    (count(distinct d.alumni_id) filter (where d.pledge_status <> 'cancelled'))::int
+  from public.campaigns c left join public.alumni_donations d on d.campaign_id = c.id
+  where public.is_member() or public.is_alumni() group by c.id
+$$;
+
+-- Donor engagement score 0-100: giving (40), recency (30), frequency (20), follow-through on pledges (10).
+create or replace function public.donor_scores() returns table (alumni_id uuid, full_name text, score int, lifetime_given numeric, gifts int, last_gift date)
+language sql stable security definer set search_path = public as $$
+  with g as (
+    select d.alumni_id, sum(d.paid_amount) as given, count(*) filter (where d.pledge_status <> 'cancelled') as gifts,
+      max(d.created_at)::date as last_gift,
+      sum(d.paid_amount) / nullif(sum(d.amount) filter (where d.pledge_status <> 'cancelled'), 0) as follow_through
+    from public.alumni_donations d group by d.alumni_id)
+  select g.alumni_id, p.full_name,
+    least(100, round(
+      least(40, 40 * ln(1 + g.given) / ln(1 + 10000))
+      + greatest(0, 30 - 30 * (current_date - g.last_gift) / 730.0)
+      + least(20, 5 * g.gifts)
+      + 10 * coalesce(g.follow_through, 0)))::int,
+    g.given, g.gifts::int, g.last_gift
+  from g join public.profiles p on p.id = g.alumni_id
+  where public.is_admin() order by 3 desc
+$$;
+
+-- ---------- Procurement & spend management ----------
+create table if not exists public.purchase_orders (
+  id uuid primary key default gen_random_uuid(),
+  requester_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  department_id uuid not null references public.departments(id) on delete restrict,
+  vendor text not null,
+  description text not null,
+  amount numeric not null check (amount > 0),
+  fiscal_year int not null default extract(year from current_date)::int,
+  status text not null default 'draft' check (status in ('draft', 'submitted', 'approved', 'rejected', 'ordered', 'received', 'cancelled')),
+  -- approvals still needed, in order: 'department', 'finance', 'owner'
+  pending_steps text[] not null default '{}',
+  routing_history jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now()
+);
+drop view if exists public.budget_status;
+create view public.budget_status with (security_invoker = true) as
+  select b.department_id, b.fiscal_year, b.amount as budget,
+    coalesce(sum(po.amount) filter (where po.status in ('submitted', 'approved', 'ordered', 'received')), 0) as committed,
+    b.amount - coalesce(sum(po.amount) filter (where po.status in ('submitted', 'approved', 'ordered', 'received')), 0) as available
+  from public.budgets b left join public.purchase_orders po on po.department_id = b.department_id and po.fiscal_year = b.fiscal_year
+  group by b.department_id, b.fiscal_year, b.amount;
+
+-- Routing by amount: under 1,000 department head; under 10,000 + finance; otherwise + owner.
+create or replace function public.submit_po(p_po uuid) returns text
+language plpgsql security definer set search_path = public as $$
+declare po record; avail numeric; steps text[]; head uuid;
+begin
+  select * into po from public.purchase_orders where id = p_po for update;
+  if po.id is null then raise exception 'Request not found.'; end if;
+  if po.requester_id <> auth.uid() and not public.is_admin() then raise exception 'Not your request.'; end if;
+  if po.status <> 'draft' then raise exception 'Only drafts can be submitted.'; end if;
+  select b.amount - coalesce((select sum(amount) from public.purchase_orders x where x.department_id = po.department_id
+      and x.fiscal_year = po.fiscal_year and x.status in ('submitted', 'approved', 'ordered', 'received')), 0)
+    into avail from public.budgets b where b.department_id = po.department_id and b.fiscal_year = po.fiscal_year;
+  if avail is null then raise exception 'The department has no budget for %.', po.fiscal_year; end if;
+  if po.amount > avail then raise exception 'Not enough budget: % available.', avail; end if;
+  steps := case when po.amount < 1000 then array['department'] when po.amount < 10000 then array['department', 'finance'] else array['department', 'finance', 'owner'] end;
+  perform set_config('erp.po_rpc', 'on', true);
+  update public.purchase_orders set status = 'submitted', pending_steps = steps,
+    routing_history = routing_history || jsonb_build_array(jsonb_build_object('at', now(), 'by', auth.uid(), 'action', 'submitted', 'route', steps)) where id = p_po;
+  perform set_config('erp.po_rpc', 'off', true);
+  select head_id into head from public.departments where id = po.department_id;
+  perform public.notify_user(head, 'Purchase request to approve', po.vendor || ' — ' || po.amount, '/procurement');
+  return array_to_string(steps, ' → ');
+end $$;
+
+create or replace function public.decide_po(p_po uuid, p_approve boolean, p_note text) returns text
+language plpgsql security definer set search_path = public as $$
+declare po record; step text; allowed boolean; rest text[]; outcome text;
+begin
+  select * into po from public.purchase_orders where id = p_po for update;
+  if po.id is null or po.status <> 'submitted' then raise exception 'This request is not awaiting approval.'; end if;
+  step := po.pending_steps[1];
+  allowed := case step
+    when 'department' then (select head_id from public.departments where id = po.department_id) = auth.uid() or public.is_admin()
+    when 'finance' then public.is_admin()
+    when 'owner' then public.app_role() = 'owner' end;
+  if not coalesce(allowed, false) then raise exception 'You cannot approve the % step.', step; end if;
+  if po.requester_id = auth.uid() and public.app_role() <> 'owner' then raise exception 'You cannot approve your own request.'; end if;
+  rest := po.pending_steps[2:];
+  outcome := case when not p_approve then 'rejected' when cardinality(rest) = 0 then 'approved' else rest[1] end;
+  perform set_config('erp.po_rpc', 'on', true);
+  update public.purchase_orders set
+    pending_steps = case when p_approve then rest else '{}' end,
+    status = case when not p_approve then 'rejected' when cardinality(rest) = 0 then 'approved' else 'submitted' end,
+    routing_history = routing_history || jsonb_build_array(jsonb_build_object('at', now(), 'by', auth.uid(), 'step', step,
+      'action', case when p_approve then 'approved' else 'rejected' end, 'note', p_note))
+  where id = p_po;
+  perform set_config('erp.po_rpc', 'off', true);
+  perform public.notify_user(po.requester_id, 'Purchase request: ' || outcome, po.vendor || ' — ' || po.amount, '/procurement');
+  perform public.emit_event('procurement.po_' || case when p_approve then 'approved' else 'rejected' end, po.requester_id, jsonb_build_object('po', po.id, 'step', step));
+  return outcome;
+end $$;
+
+-- Requesters edit only their drafts; everything else goes through submit_po / decide_po.
+create or replace function public.guard_po_update() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if public.is_admin() or coalesce(current_setting('erp.po_rpc', true), '') = 'on' then return new; end if;
+  if old.status <> 'draft' or new.status not in ('draft', 'cancelled') or new.pending_steps <> old.pending_steps
+     or new.routing_history <> old.routing_history or new.requester_id <> old.requester_id then
+    raise exception 'Submitted requests can only change through the approval steps.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists po_guard on public.purchase_orders;
+create trigger po_guard before update on public.purchase_orders for each row execute function public.guard_po_update();
+
+-- ---------- Compliance & accreditation ----------
+insert into storage.buckets (id, name, public) values ('institution-docs', 'institution-docs', false) on conflict (id) do nothing;
+drop policy if exists "institution docs read" on storage.objects;
+drop policy if exists "institution docs admin write" on storage.objects;
+drop policy if exists "institution docs admin delete" on storage.objects;
+create policy "institution docs read" on storage.objects for select to authenticated using (bucket_id = 'institution-docs' and public.is_staff());
+create policy "institution docs admin write" on storage.objects for insert to authenticated with check (bucket_id = 'institution-docs' and public.is_admin());
+create policy "institution docs admin delete" on storage.objects for delete to authenticated using (bucket_id = 'institution-docs' and public.is_admin());
+
+create table if not exists public.institutional_documents (
+  id uuid primary key default gen_random_uuid(),
+  document_type text not null check (document_type in ('policy', 'procedure', 'accreditation', 'statutory', 'contract')),
+  title text not null,
+  standard_reference text,
+  file_path text,
+  version int not null default 1,
+  status text not null default 'current' check (status in ('draft', 'current', 'superseded', 'expired')),
+  valid_until date,
+  owner_id uuid default auth.uid(),
+  change_note text,
+  created_at timestamptz not null default now(),
+  unique (document_type, title, version)
+);
+-- Version control: a document with the same type and title becomes the next version and
+-- retires the one it replaces.
+create or replace function public.before_document() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  new.version := coalesce((select max(version) from public.institutional_documents where document_type = new.document_type and lower(title) = lower(new.title)), 0) + 1;
+  if new.status = 'current' then
+    update public.institutional_documents set status = 'superseded'
+      where document_type = new.document_type and lower(title) = lower(new.title) and status = 'current';
+  end if;
+  return new;
+end $$;
+drop trigger if exists document_before on public.institutional_documents;
+create trigger document_before before insert on public.institutional_documents for each row execute function public.before_document();
+
+-- Nightly: expire lapsed documents and warn administrators 60 days ahead.
+create or replace function public.check_document_validity() returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  if auth.uid() is not null and not public.is_admin() then raise exception 'Administrators only.'; end if;
+  update public.institutional_documents set status = 'expired' where status = 'current' and valid_until < current_date;
+  get diagnostics n = row_count;
+  insert into public.notifications (user_id, title, body, link)
+    select p.id, 'Document expiring: ' || d.title, 'Valid until ' || d.valid_until, '/compliance'
+    from public.institutional_documents d cross join public.profiles p
+    where d.status = 'current' and d.valid_until between current_date and current_date + 60
+      and p.active and p.role in ('owner', 'administration')
+      and not exists (select 1 from public.notifications x where x.user_id = p.id and x.title = 'Document expiring: ' || d.title);
+  return n;
+end $$;
+
+create table if not exists public.statutory_reports (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null check (kind in ('enrolment_census', 'financial_summary', 'staffing', 'research_activity')),
+  period text not null,
+  data jsonb not null,
+  generated_by uuid default auth.uid(),
+  generated_at timestamptz not null default now()
+);
+-- Automated statutory reporting: snapshot the numbers regulators ask for and keep them on file.
+create or replace function public.generate_statutory_report(p_kind text, p_period text) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare snapshot jsonb; new_id uuid;
+begin
+  if not public.is_admin() then raise exception 'Administrators only.'; end if;
+  snapshot := case p_kind
+    when 'enrolment_census' then jsonb_build_object(
+      'students', (select count(*) from public.profiles where role = 'student' and active),
+      'by_programme', coalesce((select jsonb_object_agg(coalesce(pr.name, 'Unassigned'), x.n) from (
+          select r.program_id, count(*) n from public.registrar_records r group by r.program_id) x left join public.programs pr on pr.id = x.program_id), '{}'::jsonb),
+      'active_enrolments', (select count(*) from public.class_enrollments where status = 'enrolled'))
+    when 'financial_summary' then jsonb_build_object(
+      'tuition_charged', (select coalesce(sum(amount), 0) from public.ledger_entries where entry_type = 'charge'),
+      'payments_received', (select coalesce(sum(amount), 0) from public.ledger_entries where entry_type = 'payment'),
+      'aid_disbursed', (select coalesce(sum(amount), 0) from public.ledger_entries where entry_type = 'aid'),
+      'expenses', (select coalesce(sum(amount), 0) from public.expenses),
+      'donations_received', (select coalesce(sum(amount), 0) from public.pledge_payments))
+    when 'staffing' then jsonb_build_object(
+      'faculty', (select count(*) from public.profiles where role = 'teacher' and active),
+      'administration', (select count(*) from public.profiles where role in ('owner', 'administration') and active),
+      'tenured', (select count(*) from public.faculty_dossiers where tenure_status = 'tenured'),
+      'tenure_track', (select count(*) from public.faculty_dossiers where tenure_status in ('tenure_track', 'under_review')))
+    when 'research_activity' then jsonb_build_object(
+      'active_grants', (select count(*) from public.grants where status in ('awarded', 'active')),
+      'awarded_total', (select coalesce(sum(total_amount), 0) from public.grants where status in ('awarded', 'active', 'closed')),
+      'spent', (select coalesce(sum(amount), 0) from public.grant_expenditures))
+    end;
+  if snapshot is null then raise exception 'Unknown report type.'; end if;
+  insert into public.statutory_reports (kind, period, data) values (p_kind, p_period, snapshot) returning id into new_id;
+  return new_id;
+end $$;
+
+-- ---------- Hardware-ready facility devices (RFID readers, 3D printers, sensors) ----------
+create table if not exists public.devices (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  kind text not null check (kind in ('rfid_reader', 'printer_3d', 'sensor', 'other')),
+  facility_id uuid references public.facilities(id) on delete set null,
+  asset_id uuid references public.assets(id) on delete set null,
+  key_hash text not null,
+  active boolean not null default true,
+  last_seen_at timestamptz,
+  last_status jsonb,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.access_cards (
+  card_uid text primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.device_events (
+  id bigint generated always as identity primary key,
+  device_id uuid not null references public.devices(id) on delete cascade,
+  event_type text not null,
+  payload jsonb not null default '{}'::jsonb,
+  result jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists device_events_device_idx on public.device_events (device_id, created_at desc);
+
+-- Returns the device's secret key once; only its SHA-256 is stored.
+create or replace function public.register_device(p_name text, p_kind text, p_facility uuid, p_asset uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare secret text := 'dev_' || replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', ''); new_id uuid;
+begin
+  if not public.is_admin() then raise exception 'Administrators only.'; end if;
+  insert into public.devices (name, kind, facility_id, asset_id, key_hash)
+    values (p_name, p_kind, p_facility, p_asset, encode(sha256(convert_to(secret, 'UTF8')), 'hex')) returning id into new_id;
+  return jsonb_build_object('device_id', new_id, 'api_key', secret);
+end $$;
+
+-- The endpoint devices call: POST /rest/v1/rpc/device_webhook with the anon key and the device key.
+--   access_request {card_uid}  → {allow, reason}: staff always; others only during their reservation of that room
+--   job_started / job_progress / job_finished {job, percent}
+--   fault {code, message}      → linked asset goes to maintenance, staff are alerted
+--   heartbeat {…}
+create or replace function public.device_webhook(p_key text, p_event text, p_payload jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare d record; holder uuid; holder_role text; res jsonb := jsonb_build_object('ok', true); booked boolean;
+begin
+  select * into d from public.devices where key_hash = encode(sha256(convert_to(coalesce(p_key, ''), 'UTF8')), 'hex') and active;
+  if d.id is null then raise exception 'Unknown or disabled device.'; end if;
+  if p_event not in ('access_request', 'job_started', 'job_progress', 'job_finished', 'fault', 'heartbeat') then raise exception 'Unknown event type.'; end if;
+  if p_event = 'access_request' then
+    select c.user_id into holder from public.access_cards c where c.card_uid = p_payload ->> 'card_uid' and c.active;
+    select role into holder_role from public.profiles where id = holder and active;
+    if holder is null or holder_role is null then
+      res := jsonb_build_object('allow', false, 'reason', 'unknown card');
+    elsif holder_role in ('owner', 'administration', 'teacher') then
+      res := jsonb_build_object('allow', true, 'reason', 'staff');
+    else
+      select exists (select 1 from public.reservations r where r.facility_id = d.facility_id and r.user_id = holder
+        and r.status = 'confirmed' and now() between r.starts_at - interval '10 minutes' and r.ends_at) into booked;
+      res := jsonb_build_object('allow', booked, 'reason', case when booked then 'reservation' else 'no current reservation' end);
+    end if;
+  elsif p_event = 'fault' then
+    if d.asset_id is not null then
+      update public.assets set status = 'maintenance' where id = d.asset_id;
+    end if;
+    insert into public.notifications (user_id, title, body, link)
+      select p.id, 'Device fault: ' || d.name, coalesce(p_payload ->> 'message', 'Fault reported'), '/facilities'
+      from public.profiles p where p.active and p.role in ('owner', 'administration', 'teacher');
+    perform public.emit_event('device.fault', null, jsonb_build_object('device', d.id, 'payload', p_payload));
+  end if;
+  insert into public.device_events (device_id, event_type, payload, result) values (d.id, p_event, coalesce(p_payload, '{}'::jsonb), res);
+  update public.devices set last_seen_at = now(), last_status = jsonb_build_object('event', p_event, 'payload', p_payload) where id = d.id;
+  return res;
+end $$;
+
+-- ---------- Row level security for section 11 ----------
+do $$
+declare p record;
+begin
+  for p in select policyname, tablename from pg_policies where schemaname = 'public' and tablename in (
+    'departments','budgets','grants','grant_expenditures','effort_certifications','faculty_dossiers','tenure_reviews','sabbaticals',
+    'labor_distributions','campaigns','alumni_donations','pledge_payments','purchase_orders','institutional_documents',
+    'statutory_reports','devices','access_cards','device_events')
+  loop
+    execute format('drop policy if exists %I on public.%I', p.policyname, p.tablename);
+  end loop;
+end $$;
+
+alter table public.departments enable row level security;
+create policy "departments read" on public.departments for select to authenticated using (public.is_member());
+create policy "departments admin" on public.departments for all to authenticated using (public.is_admin()) with check (public.is_admin());
+alter table public.budgets enable row level security;
+create policy "budgets staff read" on public.budgets for select to authenticated using (public.is_staff());
+create policy "budgets admin" on public.budgets for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+alter table public.grants enable row level security;
+create policy "grants staff read" on public.grants for select to authenticated using (public.is_staff());
+create policy "grants pi propose" on public.grants for insert to authenticated with check (public.is_staff() and principal_investigator = auth.uid() and status = 'proposal');
+create policy "grants admin" on public.grants for all to authenticated using (public.is_admin()) with check (public.is_admin());
+alter table public.grant_expenditures enable row level security;
+create policy "grant spend read" on public.grant_expenditures for select to authenticated using (public.is_staff());
+create policy "grant spend pi or admin" on public.grant_expenditures for insert to authenticated with check (
+  public.is_admin() or exists (select 1 from public.grants g where g.id = grant_id and g.principal_investigator = auth.uid()));
+create policy "grant spend admin fix" on public.grant_expenditures for delete to authenticated using (public.is_admin());
+alter table public.effort_certifications enable row level security;
+create policy "effort read" on public.effort_certifications for select to authenticated using (person_id = auth.uid() or public.is_admin()
+  or exists (select 1 from public.grants g where g.id = grant_id and g.principal_investigator = auth.uid()));
+create policy "effort own" on public.effort_certifications for insert to authenticated with check ((person_id = auth.uid() and public.is_staff()) or public.is_admin());
+create policy "effort certify own" on public.effort_certifications for update to authenticated using (person_id = auth.uid() or public.is_admin()) with check (person_id = auth.uid() or public.is_admin());
+
+alter table public.faculty_dossiers enable row level security;
+create policy "dossier own read" on public.faculty_dossiers for select to authenticated using (faculty_id = auth.uid() or public.is_admin());
+create policy "dossier own edit" on public.faculty_dossiers for update to authenticated using (faculty_id = auth.uid() or public.is_admin()) with check (faculty_id = auth.uid() or public.is_admin());
+create policy "dossier admin" on public.faculty_dossiers for all to authenticated using (public.is_admin()) with check (public.is_admin());
+-- Faculty may edit publications/service on their own dossier but never their rank or tenure status.
+create or replace function public.guard_dossier() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if public.is_admin() or pg_trigger_depth() > 1 then return new; end if;
+  if new.rank <> old.rank or new.tenure_status <> old.tenure_status or new.tenure_clock_start is distinct from old.tenure_clock_start
+     or new.faculty_id <> old.faculty_id or new.department_id is distinct from old.department_id then
+    raise exception 'Rank, tenure and department are managed by the administration.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists dossier_guard on public.faculty_dossiers;
+create trigger dossier_guard before update on public.faculty_dossiers for each row execute function public.guard_dossier();
+alter table public.tenure_reviews enable row level security;
+create policy "tenure reviews read" on public.tenure_reviews for select to authenticated using (public.is_admin()
+  or exists (select 1 from public.faculty_dossiers d where d.id = dossier_id and d.faculty_id = auth.uid()));
+create policy "tenure reviews admin" on public.tenure_reviews for all to authenticated using (public.is_admin()) with check (public.is_admin());
+alter table public.sabbaticals enable row level security;
+create policy "sabbatical own read" on public.sabbaticals for select to authenticated using (faculty_id = auth.uid() or public.is_admin());
+create policy "sabbatical own request" on public.sabbaticals for insert to authenticated with check (faculty_id = auth.uid() and status = 'requested' and public.is_staff());
+create policy "sabbatical admin" on public.sabbaticals for all to authenticated using (public.is_admin()) with check (public.is_admin());
+alter table public.labor_distributions enable row level security;
+create policy "labor own read" on public.labor_distributions for select to authenticated using (faculty_id = auth.uid() or public.is_admin());
+create policy "labor admin" on public.labor_distributions for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+alter table public.campaigns enable row level security;
+create policy "campaigns read" on public.campaigns for select to authenticated using (public.is_member() or public.is_alumni());
+create policy "campaigns admin" on public.campaigns for all to authenticated using (public.is_admin()) with check (public.is_admin());
+alter table public.alumni_donations enable row level security;
+create policy "donations own read" on public.alumni_donations for select to authenticated using (alumni_id = auth.uid() or public.is_admin());
+create policy "donations own pledge" on public.alumni_donations for insert to authenticated with check (alumni_id = auth.uid() and (public.is_alumni() or public.is_member()));
+create policy "donations own cancel" on public.alumni_donations for update to authenticated using (alumni_id = auth.uid()) with check (alumni_id = auth.uid());
+create policy "donations admin" on public.alumni_donations for all to authenticated using (public.is_admin()) with check (public.is_admin());
+alter table public.pledge_payments enable row level security;
+create policy "payments own read" on public.pledge_payments for select to authenticated using (public.is_admin()
+  or exists (select 1 from public.alumni_donations d where d.id = donation_id and d.alumni_id = auth.uid()));
+create policy "payments own pay" on public.pledge_payments for insert to authenticated with check (public.is_admin()
+  or exists (select 1 from public.alumni_donations d where d.id = donation_id and d.alumni_id = auth.uid()));
+
+alter table public.purchase_orders enable row level security;
+create policy "po read" on public.purchase_orders for select to authenticated using (requester_id = auth.uid() or public.is_admin()
+  or exists (select 1 from public.departments d where d.id = department_id and d.head_id = auth.uid()));
+create policy "po staff create" on public.purchase_orders for insert to authenticated with check (requester_id = auth.uid() and public.is_staff() and status = 'draft' and pending_steps = '{}' and routing_history = '[]'::jsonb);
+create policy "po own draft" on public.purchase_orders for update to authenticated using (requester_id = auth.uid() or public.is_admin()) with check (requester_id = auth.uid() or public.is_admin());
+create policy "po own delete draft" on public.purchase_orders for delete to authenticated using ((requester_id = auth.uid() and status = 'draft') or public.is_admin());
+
+alter table public.institutional_documents enable row level security;
+create policy "documents staff read" on public.institutional_documents for select to authenticated using (public.is_staff());
+create policy "documents admin" on public.institutional_documents for all to authenticated using (public.is_admin()) with check (public.is_admin());
+alter table public.statutory_reports enable row level security;
+create policy "statutory admin read" on public.statutory_reports for select to authenticated using (public.is_admin());
+create policy "statutory admin delete" on public.statutory_reports for delete to authenticated using (public.is_admin());
+
+alter table public.devices enable row level security;
+create policy "devices staff read" on public.devices for select to authenticated using (public.is_staff());
+create policy "devices admin" on public.devices for update to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "devices admin delete" on public.devices for delete to authenticated using (public.is_admin());
+alter table public.access_cards enable row level security;
+create policy "cards own read" on public.access_cards for select to authenticated using (user_id = auth.uid() or public.is_admin());
+create policy "cards admin" on public.access_cards for all to authenticated using (public.is_admin()) with check (public.is_admin());
+alter table public.device_events enable row level security;
+create policy "device events staff read" on public.device_events for select to authenticated using (public.is_staff());
+
+-- The device key hash is never readable through the API.
+revoke select on public.devices from anon, authenticated;
+grant select (id, name, kind, facility_id, asset_id, active, last_seen_at, last_status, created_at) on public.devices to authenticated;
+
+-- Functions: who may call what.
+revoke execute on function public.open_tenure_review(uuid), public.submit_po(uuid), public.decide_po(uuid, boolean, text),
+  public.check_document_validity(), public.generate_statutory_report(text, text), public.register_device(text, text, uuid, uuid),
+  public.donor_scores(), public.campaign_totals() from public, anon;
+grant execute on function public.open_tenure_review(uuid), public.submit_po(uuid), public.decide_po(uuid, boolean, text),
+  public.check_document_validity(), public.generate_statutory_report(text, text), public.register_device(text, text, uuid, uuid),
+  public.donor_scores(), public.campaign_totals() to authenticated;
+revoke execute on function public.device_webhook(text, text, jsonb) from public;
+grant execute on function public.device_webhook(text, text, jsonb) to anon, authenticated;
+
+-- Audit trail and nightly jobs.
+do $$
+declare t text;
+begin
+  foreach t in array array['departments','budgets','grants','grant_expenditures','faculty_dossiers','tenure_reviews','sabbaticals',
+    'labor_distributions','campaigns','alumni_donations','pledge_payments','purchase_orders','institutional_documents','devices','access_cards']
+  loop
+    execute format('drop trigger if exists audit_%s on public.%I', t, t);
+    execute format('create trigger audit_%s after insert or update or delete on public.%I for each row execute function public.write_audit()', t, t);
+  end loop;
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.unschedule(jobid) from cron.job where jobname = 'erp-documents';
+    perform cron.schedule('erp-documents', '45 2 * * *', 'select public.check_document_validity()');
+  end if;
+end $$;
+
+notify pgrst, 'reload schema';

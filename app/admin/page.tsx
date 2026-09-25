@@ -169,7 +169,7 @@ export default function AdminPortal() {
   const directory = profiles.filter((p) => !p.pending);
   const visible = directory.filter((p) => matches(search, p.full_name, p.email, p.role, p.id));
   const students = profiles.filter((p) => p.role === "student" && p.active);
-  const roleOptions: Role[] = role === "owner" ? ["student", "parent", "teacher", "administration", "owner"] : ["student", "parent", "teacher", "administration"];
+  const roleOptions: Role[] = role === "owner" ? ["student", "parent", "alumni", "teacher", "administration", "owner"] : ["student", "parent", "alumni", "teacher", "administration"];
 
   return (
     <ModuleShell

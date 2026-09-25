@@ -569,6 +569,188 @@ check("user clears the flag after changing password", !r.error && r.rows.length 
   check("signed-out visitors cannot list LTI tools", (await count(null, `select * from public.lti_tools`)) === 0);
 }
 
+// --- Section 11: research & grants, faculty lifecycle, advancement, procurement, compliance, devices ---
+{
+  const q1 = async (sql, params = []) => (await db.query(sql, params)).rows;
+  const grace = "00000000-0000-0000-0000-000000000099";
+  await db.query(`insert into auth.users (id, email, raw_user_meta_data) values ($1, 'grace@test.local', '{"full_name":"grace"}')`, [grace]);
+  await db.exec(`update public.profiles set active = true, pending = false, role = 'alumni' where id = '${grace}'`);
+  const year = new Date().getFullYear();
+  const [dept] = await q1(`insert into public.departments (name, code, head_id) values ('Engineering', 'ENG', $1) returning id`, [ids.teacher]);
+  await q1(`insert into public.budgets (department_id, fiscal_year, amount) values ($1, $2, 5000)`, [dept.id, year]);
+  const today = new Date().toISOString().slice(0, 10);
+  const nextYear = `${year + 1}-12-31`;
+
+  // Research & grants
+  let r = await as(ids.teacher, `insert into public.grants (title, sponsor_name, principal_investigator, total_amount, start_date, end_date) values ('Robotics', 'NSF', $1, 10000, $2, $3) returning id`, [ids.teacher, `${year}-01-01`, nextYear]);
+  const grantId = r.rows[0]?.id;
+  check("faculty propose grants with themselves as PI", !!grantId, r.error ?? "");
+  r = await as(ids.teacher, `insert into public.grants (title, sponsor_name, principal_investigator, total_amount, start_date, end_date, status) values ('X', 'Y', $1, 5, $2, $3, 'active')`, [ids.teacher, `${year}-01-01`, nextYear]);
+  check("faculty cannot create an already-awarded grant", !!r.error, r.error ?? "");
+  r = await as(ids.alice, `insert into public.grants (title, sponsor_name, principal_investigator, total_amount, start_date, end_date) values ('X', 'Y', $1, 5, $2, $3)`, [ids.alice, `${year}-01-01`, nextYear]);
+  check("students cannot propose grants", !!r.error, r.error ?? "");
+  check("PI cannot award their own grant", (await as(ids.teacher, `update public.grants set status = 'active' where id = $1 returning id`, [grantId])).rows.length === 0);
+  await as(ids.admin, `update public.grants set status = 'active', restriction_rules = '{"allowed_categories":["equipment","travel"],"category_caps":{"travel":500}}' where id = $1`, [grantId]);
+  r = await as(ids.teacher, `insert into public.grant_expenditures (grant_id, category, amount, description) values ($1, 'equipment', 1000, 'Servo motors')`, [grantId]);
+  check("PI records allowed spending", !r.error, r.error ?? "");
+  r = await as(ids.teacher, `insert into public.grant_expenditures (grant_id, category, amount, description) values ($1, 'catering', 50, 'Lunch')`, [grantId]);
+  check("spending outside the sponsor's categories is refused", /does not allow/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.teacher, `insert into public.grant_expenditures (grant_id, category, amount, description) values ($1, 'travel', 600, 'Conference')`, [grantId]);
+  check("category caps are enforced", /caps "travel"/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.teacher, `insert into public.grant_expenditures (grant_id, category, amount, description, spent_on) values ($1, 'equipment', 10, 'Old', '2000-01-01')`, [grantId]);
+  check("spending outside the grant period is refused", /outside the grant period/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.teacher, `insert into public.grant_expenditures (grant_id, category, amount, description) values ($1, 'equipment', 9500, 'Robot arm')`, [grantId]);
+  check("overspending a grant is refused", /overspend/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.alice, `insert into public.grant_expenditures (grant_id, category, amount, description) values ($1, 'equipment', 1, 'x')`, [grantId]);
+  check("only the PI or admins can spend grant money", !!r.error, r.error ?? "");
+  check("grant balance tracks spending", Number((await as(ids.admin, `select remaining from public.grant_balances where grant_id = $1`, [grantId])).rows[0]?.remaining) === 9000);
+  check("students cannot see grants", (await count(ids.alice, `select * from public.grants`)) === 0);
+  r = await as(ids.teacher, `insert into public.effort_certifications (grant_id, person_id, period, percent_effort) values ($1, $2, '${year}-Q3', 60)`, [grantId, ids.teacher]);
+  check("faculty certify their effort", !r.error, r.error ?? "");
+  const [grant2] = await q1(`insert into public.grants (title, sponsor_name, principal_investigator, total_amount, start_date, end_date, status) values ('Second', 'NIH', $1, 100, $2, $3, 'active') returning id`, [ids.teacher, `${year}-01-01`, nextYear]);
+  r = await as(ids.teacher, `insert into public.effort_certifications (grant_id, person_id, period, percent_effort) values ($1, $2, '${year}-Q3', 50)`, [grant2.id, ids.teacher]);
+  check("certified effort can't exceed 100% in a period", /exceed 100/.test(r.error ?? ""), r.error ?? "accepted!");
+
+  // Faculty lifecycle
+  const [dossier] = await q1(`insert into public.faculty_dossiers (faculty_id, department_id, tenure_clock_start) values ($1, $2, $3) returning id`, [ids.teacher, dept.id, `${year - 7}-09-01`]);
+  r = await as(ids.teacher, `update public.faculty_dossiers set publications = '[{"title":"Kinematics"}]' where faculty_id = $1 returning id`, [ids.teacher]);
+  check("faculty update their own publications", r.rows.length === 1, r.error ?? "");
+  r = await as(ids.teacher, `update public.faculty_dossiers set rank = 'full' where faculty_id = $1`, [ids.teacher]);
+  check("faculty cannot promote themselves", /managed by the administration/.test(r.error ?? ""), r.error ?? "accepted!");
+  check("students cannot read dossiers", (await count(ids.alice, `select * from public.faculty_dossiers`)) === 0);
+  r = await as(ids.teacher, `select public.open_tenure_review($1)`, [dossier.id]);
+  check("only admins open tenure reviews", !!r.error, r.error ?? "");
+  await as(ids.admin, `select public.open_tenure_review($1)`, [dossier.id]);
+  for (const stage of ["department", "college", "provost"]) {
+    await as(ids.admin, `update public.tenure_reviews set decision = 'recommend' where dossier_id = $1 and stage = $2`, [dossier.id, stage]);
+  }
+  check("tenure review advances stage by stage", (await q1(`select count(*)::int n from public.tenure_reviews where dossier_id = $1`, [dossier.id]))[0].n === 4);
+  r = await as(ids.admin, `update public.tenure_reviews set decision = 'recommend' where dossier_id = $1 and stage = 'board'`, [dossier.id]);
+  check("the board must approve or deny", !!r.error, r.error ?? "");
+  await as(ids.admin, `update public.tenure_reviews set decision = 'approved' where dossier_id = $1 and stage = 'board'`, [dossier.id]);
+  const [d2] = await q1(`select tenure_status, rank from public.faculty_dossiers where id = $1`, [dossier.id]);
+  check("board approval grants tenure and promotes", d2.tenure_status === "tenured" && d2.rank === "associate", JSON.stringify(d2));
+  check("faculty are told the tenure decision", (await count(ids.teacher, `select * from public.notifications where title = 'Tenure decision'`)) === 1);
+  check("faculty see their own review steps", (await count(ids.teacher, `select * from public.tenure_reviews`)) === 4);
+  r = await as(ids.teacher, `insert into public.sabbaticals (starts_on, ends_on, plan) values ('${year + 1}-01-01', '${year + 1}-06-30', 'Research leave')`);
+  check("tenured faculty request a sabbatical", !r.error, r.error ?? "");
+  r = await as(ids.teacher, `insert into public.sabbaticals (starts_on, ends_on, plan) values ('${year + 1}-03-01', '${year + 1}-09-30', 'Overlap')`);
+  check("overlapping sabbaticals are refused", /sabbaticals_no_overlap|conflicting key/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.alice, `insert into public.sabbaticals (starts_on, ends_on, plan) values ('${year + 1}-01-01', '${year + 1}-02-01', 'x')`);
+  check("students cannot request sabbaticals", !!r.error, r.error ?? "");
+  r = await as(ids.admin, `insert into public.labor_distributions (faculty_id, department_id, percent) values ($1, $2, 60)`, [ids.teacher, dept.id]);
+  const r2 = await as(ids.admin, `insert into public.labor_distributions (faculty_id, grant_id, percent) values ($1, $2, 40)`, [ids.teacher, grantId]);
+  check("pay can be split across department and grant funds", !r.error && !r2.error, (r.error ?? "") + (r2.error ?? ""));
+  r = await as(ids.admin, `insert into public.labor_distributions (faculty_id, department_id, percent) values ($1, $2, 10)`, [ids.teacher, dept.id]);
+  check("pay splits can't exceed 100%", /more than 100/.test(r.error ?? ""), r.error ?? "accepted!");
+  check("faculty see their own pay split only", (await count(ids.teacher, `select * from public.labor_distributions`)) === 2 && (await count(ids.alice, `select * from public.labor_distributions`)) === 0);
+
+  // Advancement & alumni
+  const [camp] = await q1(`insert into public.campaigns (name, goal, fund) values ('New Robotics Lab', 50000, 'Capital Fund') returning id`);
+  check("alumni see campaigns", (await count(grace, `select * from public.campaigns`)) === 1);
+  check("alumni cannot see internal data (courses, chat, notices)", (await count(grace, `select * from public.courses`)) === 0
+    && (await count(grace, `select * from public.chat_messages`)) === 0 && (await count(grace, `select * from public.registrar_records`)) === 0);
+  r = await as(grace, `insert into public.alumni_donations (alumni_id, campaign_id, amount, paid_amount, pledge_status) values ($1, $2, 1000, 1000, 'paid') returning id, paid_amount, pledge_status, allocated_fund`, [grace, camp.id]);
+  const pledge = r.rows[0];
+  check("a new pledge always starts unpaid", pledge && Number(pledge.paid_amount) === 0 && pledge.pledge_status === "pledged" && pledge.allocated_fund === "Capital Fund", r.error ?? JSON.stringify(pledge));
+  r = await as(grace, `update public.alumni_donations set paid_amount = 1000 where id = $1`, [pledge.id]);
+  check("donors cannot mark their own pledge paid", !!r.error, r.error ?? "accepted!");
+  r = await as(grace, `insert into public.pledge_payments (donation_id, amount) values ($1, 400) returning receipt_no`, [pledge.id]);
+  check("pledge payments issue a receipt", /^R-/.test(r.rows[0]?.receipt_no ?? ""), r.error ?? "");
+  check("partial payment marks the pledge partially paid", (await q1(`select pledge_status from public.alumni_donations where id = $1`, [pledge.id]))[0].pledge_status === "partially_paid");
+  r = await as(grace, `insert into public.pledge_payments (donation_id, amount) values ($1, 700)`, [pledge.id]);
+  check("payments cannot exceed the pledge", /exceeds the outstanding/.test(r.error ?? ""), r.error ?? "accepted!");
+  await as(grace, `insert into public.pledge_payments (donation_id, amount) values ($1, 600)`, [pledge.id]);
+  check("paying the rest completes the pledge", (await q1(`select pledge_status from public.alumni_donations where id = $1`, [pledge.id]))[0].pledge_status === "paid");
+  check("other people cannot see someone's gifts", (await count(ids.alice, `select * from public.alumni_donations`)) === 0 && (await count(ids.teacher, `select * from public.pledge_payments`)) === 0);
+  r = await as(grace, `select * from public.campaign_totals()`);
+  check("campaign totals are shown to donors", Number(r.rows[0]?.raised) === 1000 && r.rows[0]?.donors === 1, r.error ?? JSON.stringify(r.rows));
+  r = await as(ids.admin, `select * from public.donor_scores()`);
+  check("admins see donor engagement scores", r.rows.length === 1 && r.rows[0].score > 40, r.error ?? JSON.stringify(r.rows));
+  check("donor scores are admin-only", (await count(grace, `select * from public.donor_scores()`)) === 0);
+
+  // Procurement
+  r = await as(ids.teacher, `insert into public.purchase_orders (department_id, vendor, description, amount) values ($1, 'Acme', 'Sensors', 800) returning id`, [dept.id]);
+  const po1 = r.rows[0]?.id;
+  check("staff raise purchase requests", !!po1, r.error ?? "");
+  r = await as(ids.alice, `insert into public.purchase_orders (department_id, vendor, description, amount) values ($1, 'Acme', 'x', 5) returning id`, [dept.id]);
+  check("students cannot raise purchase requests", !!r.error, r.error ?? "");
+  r = await as(ids.teacher, `update public.purchase_orders set status = 'approved' where id = $1`, [po1]);
+  check("requesters cannot approve by editing the record", !!r.error, r.error ?? "accepted!");
+  r = await as(ids.teacher, `select public.submit_po($1) as route`, [po1]);
+  check("small requests route to the department head only", r.rows[0]?.route === "department", r.error ?? JSON.stringify(r.rows));
+  r = await as(ids.teacher, `select public.decide_po($1, true, 'ok')`, [po1]);
+  check("nobody approves their own request", /own request/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.admin, `select public.decide_po($1, true, 'ok') as outcome`, [po1]);
+  check("approval completes a one-step route", r.rows[0]?.outcome === "approved", r.error ?? "");
+  const [po2] = (await as(ids.teacher, `insert into public.purchase_orders (department_id, vendor, description, amount) values ($1, 'Bolt', 'Robot kit', 4000) returning id`, [dept.id])).rows;
+  r = await as(ids.teacher, `select public.submit_po($1) as route`, [po2.id]);
+  check("mid-size requests also need finance", r.rows[0]?.route === "department → finance", r.error ?? JSON.stringify(r.rows));
+  const [po3] = (await as(ids.teacher, `insert into public.purchase_orders (department_id, vendor, description, amount) values ($1, 'Bolt', 'Extra', 300) returning id`, [dept.id])).rows;
+  r = await as(ids.teacher, `select public.submit_po($1)`, [po3.id]);
+  check("requests beyond the remaining budget are refused", /Not enough budget: 200/.test(r.error ?? ""), r.error ?? "accepted!");
+  check("budget status shows committed spend", Number((await as(ids.admin, `select available from public.budget_status where department_id = $1`, [dept.id])).rows[0]?.available) === 200);
+  await as(ids.admin, `update public.budgets set amount = 60000 where department_id = $1`, [dept.id]);
+  const [po4] = (await as(ids.teacher, `insert into public.purchase_orders (department_id, vendor, description, amount) values ($1, 'Big', '3D printer farm', 12000) returning id`, [dept.id])).rows;
+  r = await as(ids.teacher, `select public.submit_po($1) as route`, [po4.id]);
+  check("large requests route department → finance → owner", r.rows[0]?.route === "department → finance → owner", r.error ?? "");
+  await as(ids.admin, `select public.decide_po($1, true, 'dept')`, [po4.id]);
+  await as(ids.admin, `select public.decide_po($1, true, 'finance')`, [po4.id]);
+  r = await as(ids.admin, `select public.decide_po($1, true, 'owner?')`, [po4.id]);
+  check("only the owner signs off the largest requests", /owner step/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.owner, `select public.decide_po($1, true, 'fine') as outcome`, [po4.id]);
+  const [po4row] = await q1(`select status, routing_history from public.purchase_orders where id = $1`, [po4.id]);
+  check("owner approval completes it with a full routing history", r.rows[0]?.outcome === "approved" && po4row.routing_history.length === 4, r.error ?? JSON.stringify(po4row));
+  check("department heads see their department's requests", (await count(ids.teacher, `select * from public.purchase_orders`)) === 4);
+
+  // Compliance & accreditation
+  r = await as(ids.admin, `insert into public.institutional_documents (document_type, title, standard_reference) values ('policy', 'Lab Safety Policy', 'ISO 45001') returning version`);
+  const r3 = await as(ids.admin, `insert into public.institutional_documents (document_type, title, standard_reference, change_note) values ('policy', 'Lab Safety Policy', 'ISO 45001', 'Updated PPE rules') returning version`);
+  const versions = await q1(`select version, status from public.institutional_documents where title = 'Lab Safety Policy' order by version`);
+  check("a new version supersedes the old one", r.rows[0]?.version === 1 && r3.rows[0]?.version === 2 && versions[0].status === "superseded" && versions[1].status === "current", JSON.stringify(versions));
+  check("staff read institutional documents; students cannot", (await count(ids.teacher, `select * from public.institutional_documents`)) === 2 && (await count(ids.alice, `select * from public.institutional_documents`)) === 0);
+  r = await as(ids.teacher, `insert into public.institutional_documents (document_type, title) values ('policy', 'Rogue')`);
+  check("only admins publish institutional documents", !!r.error, r.error ?? "");
+  await q1(`insert into public.institutional_documents (document_type, title, valid_until) values ('accreditation', 'Old Accreditation', '2000-01-01')`);
+  await q1(`insert into public.institutional_documents (document_type, title, valid_until) values ('accreditation', 'Expiring Accreditation', current_date + 30)`);
+  r = await as(ids.admin, `select public.check_document_validity() as n`);
+  check("lapsed documents expire automatically", r.rows[0]?.n === 1 && (await q1(`select status from public.institutional_documents where title = 'Old Accreditation'`))[0].status === "expired", r.error ?? "");
+  check("admins are warned before documents expire", (await count(ids.admin, `select * from public.notifications where title = 'Document expiring: Expiring Accreditation'`)) === 1);
+  r = await as(ids.admin, `select public.generate_statutory_report('research_activity', '${year}') as id`);
+  const [rep] = await q1(`select data from public.statutory_reports where id = $1`, [r.rows[0]?.id]);
+  check("statutory reports snapshot the numbers", rep && Number(rep.data.spent) === 1000 && rep.data.active_grants >= 1, r.error ?? JSON.stringify(rep));
+  r = await as(ids.teacher, `select public.generate_statutory_report('staffing', '${year}')`);
+  check("only admins generate statutory reports", !!r.error, r.error ?? "");
+
+  // Hardware-ready facility devices
+  const [lab] = await q1(`insert into public.facilities (name, type, capacity) values ('Robot Lab', 'lab', 10) returning id`);
+  const [printer] = await q1(`insert into public.assets (name, asset_tag, facility_id) values ('3D Printer', 'AST-3D-1', $1) returning id`, [lab.id]);
+  r = await as(ids.teacher, `select public.register_device('Door', 'rfid_reader', $1, null)`, [lab.id]);
+  check("only admins register devices", !!r.error, r.error ?? "");
+  const door = (await as(ids.admin, `select public.register_device('Lab door', 'rfid_reader', $1, null) as d`, [lab.id])).rows[0].d;
+  const prn = (await as(ids.admin, `select public.register_device('Printer 1', 'printer_3d', $1, $2) as d`, [lab.id, printer.id])).rows[0].d;
+  check("devices get a one-time secret key", /^dev_[0-9a-f]{64}$/.test(door.api_key), JSON.stringify(door));
+  r = await as(ids.admin, `select key_hash from public.devices`);
+  check("device key hashes are never readable", !!r.error, r.error ?? "readable!");
+  r = await as(null, `select public.device_webhook('dev_wrong', 'heartbeat', '{}')`);
+  check("wrong device keys are rejected", /Unknown or disabled device/.test(r.error ?? ""), r.error ?? "accepted!");
+  await q1(`insert into public.access_cards (card_uid, user_id) values ('CARD-ALICE', $1), ('CARD-TEACH', $2)`, [ids.alice, ids.teacher]);
+  const scan = async (card) => (await as(null, `select public.device_webhook($1, 'access_request', $2) as res`, [door.api_key, { card_uid: card }])).rows[0]?.res;
+  check("unknown cards are refused at the door", (await scan("NOPE")).allow === false);
+  check("students without a booking are refused at the door", (await scan("CARD-ALICE")).allow === false);
+  await q1(`insert into public.reservations (facility_id, user_id, title, starts_at, ends_at) values ($1, $2, 'Build', now() - interval '5 minutes', now() + interval '1 hour')`, [lab.id, ids.alice]);
+  check("students with a current booking are let in", (await scan("CARD-ALICE")).allow === true);
+  check("staff cards always open the door", (await scan("CARD-TEACH")).reason === "staff");
+  r = await as(null, `select public.device_webhook($1, 'fault', '{"code":"E42","message":"Nozzle jam"}')`, [prn.api_key]);
+  check("a device fault puts its asset into maintenance", !r.error && (await q1(`select status from public.assets where id = $1`, [printer.id]))[0].status === "maintenance", r.error ?? "");
+  check("staff are alerted to device faults", (await count(ids.teacher, `select * from public.notifications where title = 'Device fault: Printer 1'`)) === 1);
+  r = await as(null, `select public.device_webhook($1, 'reboot_everything', '{}')`, [prn.api_key]);
+  check("unknown device events are rejected", /Unknown event type/.test(r.error ?? ""), r.error ?? "accepted!");
+  check("device events are logged for staff only", (await count(ids.teacher, `select * from public.device_events`)) >= 5 && (await count(ids.alice, `select * from public.device_events`)) === 0);
+  await as(ids.admin, `update public.devices set active = false where id = $1`, [door.device_id]);
+  check("disabled devices are cut off", /Unknown or disabled device/.test((await as(null, `select public.device_webhook($1, 'heartbeat', '{}')`, [door.api_key])).error ?? ""));
+}
+
 // --- Deactivated account ---
 await db.exec(`update public.profiles set active = false where id = '${ids.eve}'`);
 check("deactivated user sees no general chat", (await count(ids.eve, `select * from public.chat_messages where channel = 'general'`)) === 0);

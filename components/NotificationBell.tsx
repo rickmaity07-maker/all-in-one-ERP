@@ -11,6 +11,19 @@ export default function NotificationBell({ userId, expanded }: { userId: string;
   const router = useRouter();
   const [items, setItems] = useState<Row[]>([]);
   const [open, setOpen] = useState(false);
+  // Screen position of the panel on wide screens. It is placed on the screen itself (position: fixed)
+  // because the sidebar scrolls and would otherwise clip a panel sticking out to its right.
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const toggle = () => {
+    if (!open && button.current && window.matchMedia("(min-width: 768px)").matches) {
+      const r = button.current.getBoundingClientRect();
+      setPos({ left: r.right + 12, top: Math.max(8, Math.min(r.top, window.innerHeight - Math.min(window.innerHeight * 0.7, 560) - 8)) });
+    } else {
+      setPos(null);
+    }
+    setOpen(!open);
+  };
   const panel = useRef<HTMLDivElement>(null);
   const instance = useId();
 
@@ -61,7 +74,8 @@ export default function NotificationBell({ userId, expanded }: { userId: string;
   return (
     <div className="relative" ref={panel}>
       <button
-        onClick={() => setOpen(!open)}
+        ref={button}
+        onClick={toggle}
         title="Notifications"
         aria-label={`Notifications${unread.length ? ` (${unread.length} unread)` : ""}`}
         className={`relative flex items-center rounded-2xl transition-all text-white/70 hover:text-white hover:bg-white/10 ${expanded ? "px-4 py-3 w-full" : "w-12 h-12 justify-center mx-auto"}`}
@@ -76,14 +90,19 @@ export default function NotificationBell({ userId, expanded }: { userId: string;
       </button>
 
       {open && (
-        <div className="fixed md:absolute left-2 right-2 md:left-full md:right-auto top-16 md:top-0 md:ml-3 md:w-96 max-h-[70vh] bg-white rounded-3xl shadow-2xl border border-slate-100 z-50 flex flex-col overflow-hidden">
+        <div
+          role="dialog"
+          aria-label="Notifications"
+          style={pos ? { left: pos.left, top: pos.top } : undefined}
+          className={`fixed ${pos ? "w-96" : "left-2 right-2 top-16"} max-h-[70vh] bg-white rounded-3xl shadow-2xl border border-slate-100 z-50 flex flex-col overflow-hidden`}
+        >
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
             <h3 className="font-black text-slate-800">Notifications</h3>
             <div className="flex items-center gap-2">
               <button onClick={() => markRead(unread.map((n) => n.id))} disabled={!unread.length} className="text-xs font-bold text-indigo-600 disabled:opacity-40 flex items-center gap-1">
                 <CheckCheck size={14} /> Mark all read
               </button>
-              <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-700 md:hidden"><X size={16} /></button>
+              <button onClick={() => setOpen(false)} aria-label="Close notifications" className="text-slate-400 hover:text-slate-700"><X size={16} /></button>
             </div>
           </div>
           <div className="overflow-y-auto">

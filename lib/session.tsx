@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 
-export type Role = "owner" | "administration" | "teacher" | "student" | "parent";
+export type Role = "owner" | "administration" | "teacher" | "student" | "parent" | "alumni";
 
 export type Profile = {
   id: string;

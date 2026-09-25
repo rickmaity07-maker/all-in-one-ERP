@@ -7,6 +7,7 @@ import {
   ArrowRight, MessageSquare, Library, Megaphone, Pin, School, Clock, HeartHandshake, Plane,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import CampaignCards from "@/components/CampaignCards";
 import { useSession, isAdmin, isStaff } from "@/lib/session";
 import { Card, Empty, Loading, StatCard, Badge } from "@/components/ui";
 import { fmtDate, money, localDate, type Row } from "@/lib/utils";
@@ -67,6 +68,23 @@ export default function Dashboard() {
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+
+  // Alumni get a giving-focused home instead of the campus overview.
+  if (role === "alumni") {
+    return (
+      <main className="flex-1 bg-[#F4F7FE] overflow-y-auto">
+        <div className="px-4 md:px-10 py-6 md:py-10 space-y-8">
+          <div className="bg-linear-to-br from-[#8A2387] to-[#E94057] rounded-3xl md:rounded-4xl p-6 md:p-10 text-white shadow-lg">
+            <p className="text-white/70 font-semibold flex items-center gap-2 mb-2"><LayoutDashboard size={18} /> Alumni</p>
+            <h1 className="text-2xl md:text-4xl font-black mb-2">{greeting}, {profile?.full_name?.split(" ")[0]}.</h1>
+            <p className="text-white/80 font-medium">Welcome back. See what your school is building and support the campaigns you care about.</p>
+            <Link href="/advancement" className="inline-flex mt-5 bg-white text-pink-700 font-bold text-sm px-5 py-2.5 rounded-xl">Give or view my giving</Link>
+          </div>
+          <CampaignCards />
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="flex-1 bg-[#F4F7FE] overflow-y-auto">

@@ -8,7 +8,7 @@ import {
   ClipboardCheck, Users as UsersIcon, Menu, ChevronLeft,
   Cpu, Briefcase, Library, Ticket, Car, LayoutDashboard, Settings,
   School, UserCheck, BookMarked, Megaphone, Plane, HeartHandshake, X,
-  Layers, Route, DoorOpen, Award, Activity, Plug,
+  Layers, Route, DoorOpen, Award, Activity, Plug, FlaskConical, BadgeCheck, ShoppingCart, FileCheck2, HandHeart,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -19,14 +19,17 @@ import NotificationBell from "./NotificationBell";
 type NavItem = { path: string; icon: LucideIcon; label: string; roles?: Role[] };
 
 const EVERYONE_BUT_PARENTS: Role[] = ["owner", "administration", "teacher", "student"];
+// Alumni only get the advancement portal, their credentials and settings, not the school's internal modules.
+const SCHOOL: Role[] = ["owner", "administration", "teacher", "student", "parent"];
+const STAFF: Role[] = ["owner", "administration", "teacher"];
 
 // One list drives the desktop sidebar and the phone menu.
 const NAV: NavItem[] = [
   { path: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { path: "/family", icon: HeartHandshake, label: "My Children", roles: ["parent"] },
-  { path: "/announcements", icon: Megaphone, label: "Notice Board" },
+  { path: "/announcements", icon: Megaphone, label: "Notice Board", roles: SCHOOL },
   { path: "/academics", icon: Layers, label: "Courses & Registration", roles: EVERYONE_BUT_PARENTS },
-  { path: "/degree-audit", icon: Route, label: "Degree Audit" },
+  { path: "/degree-audit", icon: Route, label: "Degree Audit", roles: SCHOOL },
   { path: "/classes", icon: School, label: "Classes & Timetable", roles: EVERYONE_BUT_PARENTS },
   { path: "/attendance", icon: UserCheck, label: "Attendance", roles: EVERYONE_BUT_PARENTS },
   { path: "/gradebook", icon: BookMarked, label: "Gradebook", roles: EVERYONE_BUT_PARENTS },
@@ -36,17 +39,22 @@ const NAV: NavItem[] = [
   { path: "/housing", icon: Building, label: "Housing & Facilities", roles: EVERYONE_BUT_PARENTS },
   { path: "/facilities", icon: DoorOpen, label: "Rooms & Assets", roles: EVERYONE_BUT_PARENTS },
   { path: "/credentials", icon: Award, label: "Credentials & Badges" },
-  { path: "/chat", icon: MessageSquare, label: "Communications" },
-  { path: "/calendar", icon: Calendar, label: "Master Calendar" },
-  { path: "/leave", icon: Plane, label: "Leave & Absence" },
+  { path: "/chat", icon: MessageSquare, label: "Communications", roles: SCHOOL },
+  { path: "/calendar", icon: Calendar, label: "Master Calendar", roles: SCHOOL },
+  { path: "/leave", icon: Plane, label: "Leave & Absence", roles: SCHOOL },
   { path: "/makerspace", icon: Cpu, label: "MakerSpace & Labs", roles: EVERYONE_BUT_PARENTS },
   { path: "/careers", icon: Briefcase, label: "Career & Portfolio", roles: EVERYONE_BUT_PARENTS },
   { path: "/library", icon: Library, label: "Digital Library", roles: EVERYONE_BUT_PARENTS },
-  { path: "/campus-life", icon: Ticket, label: "Student Life" },
-  { path: "/logistics", icon: Car, label: "Logistics & Transport" },
+  { path: "/campus-life", icon: Ticket, label: "Student Life", roles: SCHOOL },
+  { path: "/logistics", icon: Car, label: "Logistics & Transport", roles: SCHOOL },
   { path: "/tasks", icon: CheckSquare, label: "Task Management", roles: ["owner", "administration", "teacher"] },
   { path: "/admissions", icon: UsersIcon, label: "Admissions CRM", roles: ["owner", "administration"] },
   { path: "/finance", icon: Wallet, label: "Finance & Billing", roles: ["owner", "administration", "student", "parent"] },
+  { path: "/research", icon: FlaskConical, label: "Research & Grants", roles: STAFF },
+  { path: "/faculty", icon: BadgeCheck, label: "Faculty & HR", roles: STAFF },
+  { path: "/procurement", icon: ShoppingCart, label: "Procurement", roles: STAFF },
+  { path: "/compliance", icon: FileCheck2, label: "Compliance", roles: STAFF },
+  { path: "/advancement", icon: HandHeart, label: "Advancement & Giving", roles: ["owner", "administration", "alumni"] },
   { path: "/analytics", icon: Activity, label: "Analytics & Risk", roles: ["owner", "administration", "teacher"] },
   { path: "/integrations", icon: Plug, label: "Integrations & API", roles: ["owner", "administration"] },
   { path: "/admin", icon: Shield, label: "Global Admin", roles: ["owner", "administration"] },

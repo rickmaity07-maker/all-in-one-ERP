@@ -578,6 +578,13 @@ test("gradebook: grade → student & parent get notified; whole-class report car
   await as(page, student);
   await page.getByRole("button", { name: /Notifications \(\d+ unread\)/ }).last().click();
   await expect(page.getByText("New grade: Quiz 1")).toBeVisible();
+  // Really on screen, not clipped by the sidebar: the point under the notification is the notification.
+  const reallyVisible = await page.getByText("New grade: Quiz 1").evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return r.right <= window.innerWidth && r.bottom <= window.innerHeight && !!hit && (el === hit || el.contains(hit) || hit.contains(el));
+  });
+  expect(reallyVisible, "notification panel is actually visible").toBe(true);
   await page.getByText("New grade: Quiz 1").click();
   await expect(page).toHaveURL(/\/gradebook/);
 });

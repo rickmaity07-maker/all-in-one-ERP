@@ -15,6 +15,7 @@ type TabId = "webhooks" | "events" | "lti" | "api";
 const EVENTS = [
   "enrollment.enrolled", "enrollment.waitlisted", "enrollment.dropped", "enrollment.completed", "student.below_full_time",
   "ledger.posted", "hold.placed", "hold.released", "exam.results_released", "credential.issued", "student.at_risk",
+  "faculty.tenure_decided", "advancement.payment_received", "procurement.po_approved", "procurement.po_rejected", "device.fault",
 ];
 
 const API_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -234,6 +235,9 @@ curl -X POST '${API_URL}/rest/v1/rpc/verify_credential' \\
                 ["record_payment / post_adjustment", "rpc", "Ledger postings (administrators)"],
                 ["my_hall_tickets", "rpc", "A student's exam seats and released results"],
                 ["verify_credential", "rpc", "Public micro-credential verification"],
+                ["device_webhook", "rpc", "Lab hardware (RFID readers, 3D printers, sensors) reports status with its device key"],
+                ["submit_po / decide_po", "rpc", "Purchase requests: budget check and amount-based approval routing"],
+                ["generate_statutory_report", "rpc", "Statutory returns (enrolment, finance, staffing, research) snapshots"],
               ].map(([r, k, p]) => (
                 <tr key={r}><td className="px-6 py-3 font-mono text-xs">{r}</td><td className="px-6 py-3"><Badge color={k === "rpc" ? "purple" : "blue"}>{k}</Badge></td><td className="px-6 py-3">{p}</td></tr>
               ))}

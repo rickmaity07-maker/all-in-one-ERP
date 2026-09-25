@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DoorOpen, CalendarPlus, Wrench, Plus, Trash2, XCircle, Package, AlertTriangle, Pencil } from "lucide-react";
+import { DoorOpen, CalendarPlus, Wrench, Plus, Trash2, XCircle, Package, AlertTriangle, Pencil, Cpu } from "lucide-react";
+import DevicesPanel from "@/components/DevicesPanel";
 import { supabase } from "@/lib/supabase";
 import { useSession, isAdmin, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, Card, Table, Loading, Badge, IconButton, StatCard, inputClass, confirmAction, toast } from "@/components/ui";
 import { errorMessage, fmtDate, fmtDateTime, localDate, matches, type Row } from "@/lib/utils";
 
-type TabId = "book" | "spaces" | "assets";
+type TabId = "book" | "spaces" | "assets" | "devices";
 const TYPES = ["classroom", "lecture_hall", "lab", "meeting_room", "sports", "other"];
 const label = (s: string) => s.replace(/_/g, " ");
 
@@ -112,6 +113,7 @@ export default function Facilities() {
     { id: "book" as TabId, label: "Book a Room", icon: CalendarPlus, group: "Spaces" },
     { id: "spaces" as TabId, label: "Rooms & Labs", icon: DoorOpen, group: "Spaces" },
     ...(staff ? [{ id: "assets" as TabId, label: "Equipment & Maintenance", icon: Package, group: "Assets" }] : []),
+    ...(staff ? [{ id: "devices" as TabId, label: "Devices & Access", icon: Cpu, group: "Assets" }] : []),
   ];
 
   const openAsset = (a?: Row) => {
@@ -304,6 +306,8 @@ export default function Facilities() {
           )}
         </Card>
       )}
+
+      {tab === "devices" && staff && <DevicesPanel admin={admin} facilities={facilities.rows} assets={assets.rows} />}
 
       {tab === "assets" && staff && (
         <div className="space-y-6">

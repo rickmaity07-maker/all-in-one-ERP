@@ -335,8 +335,17 @@ export async function capturePrints(page: Page) {
   });
 }
 
+// Waits for a new printed document (not just a fixed delay, so a slow print is never missed or confused
+// with the previous one), then returns everything printed on this page so far.
+const printedSeen = new WeakMap<Page, { doc: number; count: number }>();
 export async function printedDocuments(page: Page): Promise<string[]> {
-  await page.waitForTimeout(600);
+  // Each page load starts a fresh list; performance.timeOrigin identifies the current page load.
+  const state = () => page.evaluate(() => ({ doc: performance.timeOrigin, count: ((window as unknown as { __printed?: string[] }).__printed ?? []).length }));
+  const before = printedSeen.get(page);
+  await expect.poll(async () => {
+    const now = await state().catch(() => ({ doc: 0, count: 0 }));
+    return now.count > (before && before.doc === now.doc ? before.count : 0);
+  }, { timeout: 15_000 }).toBe(true).catch(() => {});
   if (onAndroid) {
     // Close Android's print dialog and come back to the app.
     await page.waitForTimeout(1500);
@@ -345,5 +354,7 @@ export async function printedDocuments(page: Page): Promise<string[]> {
       await returnToApp();
     }
   }
-  return page.evaluate(() => (window as unknown as { __printed?: string[] }).__printed ?? []);
+  const docs = await page.evaluate(() => (window as unknown as { __printed?: string[] }).__printed ?? []);
+  printedSeen.set(page, { doc: await page.evaluate(() => performance.timeOrigin), count: docs.length });
+  return docs;
 }
