@@ -268,7 +268,9 @@ export async function login(page: Page, user: TestUser | string, password?: stri
 
 export async function logout(page: Page) {
   await page.getByTitle("Log Out").click();
-  await expect(page).toHaveURL(/\/$/);
+  // Wait for the sign-in screen itself: on the web version every URL ends in "/", so the URL alone
+  // doesn't show that signing out has finished.
+  await expect(page.getByRole("heading", { name: "Secure Sign In" })).toBeVisible();
 }
 
 export async function expectToast(page: Page, text: string | RegExp, timeout?: number) {
