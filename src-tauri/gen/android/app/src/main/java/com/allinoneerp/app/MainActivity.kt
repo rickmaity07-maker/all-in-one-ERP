@@ -12,6 +12,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -22,6 +23,14 @@ class MainActivity : TauriActivity() {
   private var printView: WebView? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    // Back on the first screen: send the app to the background (like Home) instead of destroying the
+    // activity, which tears down the Rust runtime and can crash on the way out. Registered before
+    // Tauri's own handler, so it only runs once Tauri has no page history left to go back through.
+    onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() {
+        moveTaskToBack(true)
+      }
+    })
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     // Edge-to-edge is mandatory on Android 15+: pad the app so nothing sits under the
@@ -34,14 +43,6 @@ class MainActivity : TauriActivity() {
       v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
       WindowInsetsCompat.CONSUMED
     }
-  }
-
-  // Back on the first screen: send the app to the background (like Home) instead of destroying the
-  // activity. Destroying it tears down the Rust runtime mid-flight and can crash on the way out;
-  // staying alive also makes reopening instant and keeps the session.
-  @Deprecated("Called by Tauri's back handler when the WebView has no history left")
-  override fun onBackPressed() {
-    moveTaskToBack(true)
   }
 
   override fun onWebViewCreate(webView: WebView) {
