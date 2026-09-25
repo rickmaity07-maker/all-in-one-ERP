@@ -101,6 +101,7 @@ export const test = base.extend({
       return;
     }
     const app = await androidPage();
+    await returnToApp(); // the app must be in front, or its WebView stops drawing
     // Each test starts signed out on the login screen, like a fresh browser context.
     await app.goto("/");
     await clearAppStorage(app);
@@ -149,6 +150,8 @@ export async function openedUrl(page: Page, click: () => Promise<void>): Promise
   // Android really left the app for another activity (the browser / viewer).
   await expect.poll(async () => !(await adb("dumpsys activity activities | grep -m1 -i 'ResumedActivity'")).includes(ANDROID_PKG), { timeout: 15_000 }).toBe(true);
   await new Promise((r) => setTimeout(r, 2500)); // let the other app finish opening
+  // Close the browser completely so it can't jump back in front later (redirects, "open in app" prompts).
+  await adb("am force-stop com.android.chrome");
   await returnToApp();
   return url;
 }

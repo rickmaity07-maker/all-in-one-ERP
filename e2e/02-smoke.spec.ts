@@ -21,7 +21,7 @@ test.describe("Smoke: every module loads", () => {
       await test.step(route, async () => {
         const before = errors.length;
         await page.goto(route);
-        await expect(page.locator("main").first()).toBeVisible();
+        await expect(page.locator("main").first()).toBeVisible({ timeout: onAndroid ? 45_000 : undefined });
         // Live connections can keep the network busy (e.g. on a phone); the checks below catch real problems.
         await page.waitForLoadState("networkidle", { timeout: onAndroid ? 3_000 : 10_000 }).catch(() => {});
         await expect(page.getByText(/Syncing|Loading/).first()).toHaveCount(0, { timeout: 15_000 }).catch(() => {});
