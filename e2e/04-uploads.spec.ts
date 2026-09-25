@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test, hasOwner, owner, login, RUN, expectToast, openedUrl } from "./helpers";
+import { test, hasOwner, owner, login, RUN, expectToast, openedUrl, onApp } from "./helpers";
 
 // Every upload button: upload through the UI, open it again through the app's own
 // Open / Play / Read button, download it, and compare the bytes with what we sent.
@@ -93,7 +93,18 @@ test("E-Learning: a video over the plan's 50 MB limit is refused with a clear me
   await page.getByRole("button", { name: "Create Module" }).click();
   await page.getByPlaceholder("e.g. Kinematics Final Project").fill(title);
   await page.locator("form select").selectOption("Video");
-  await page.locator('form input[type="file"]').setInputFiles(bigFile);
+  if (onApp) {
+    // Playwright can't hand files over 50 MB to an app it is attached to, so the 55 MB file is
+    // created inside the app and put into the same file field (the app's size check is identical).
+    await page.locator('form input[type="file"]').evaluate((input: HTMLInputElement) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([new Uint8Array(55 * 1024 * 1024)], "too-big.mp4", { type: "video/mp4" }));
+      input.files = dt.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  } else {
+    await page.locator('form input[type="file"]').setInputFiles(bigFile);
+  }
   await page.getByRole("button", { name: "Publish" }).click();
   await expect(page.locator(".fixed.bottom-6 .bg-red-50").last()).toContainText(/over the 50 MB file size limit/i, { timeout: 5_000 });
   await page.keyboard.press("Escape");

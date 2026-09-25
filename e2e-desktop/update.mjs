@@ -43,7 +43,12 @@ function watchCsp(page, bucket) {
 }
 
 async function signIn(page) {
-  if (await page.getByRole("heading", { name: /Good (morning|afternoon|evening)/ }).isVisible().catch(() => false)) return;
+  // The app may still be signed in from before the update and move to the dashboard by itself; wait
+  // until either the dashboard or a settled sign-in form is showing before typing.
+  const greeting = page.getByRole("heading", { name: /Good (morning|afternoon|evening)/ });
+  await greeting.or(page.getByPlaceholder("Email Address")).first().waitFor({ timeout: 30000 });
+  await sleep(3000);
+  if (await greeting.isVisible().catch(() => false)) return;
   if (!(await page.getByPlaceholder("Email Address").isVisible().catch(() => false))) {
     await page.evaluate(() => (window.location.href = "/"));
     await page.getByPlaceholder("Email Address").waitFor();

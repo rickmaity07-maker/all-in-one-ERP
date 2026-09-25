@@ -52,11 +52,37 @@ mod android_update {
   }
 }
 
+// Desktop: the app's WebView2 ignores browser-style (blob) downloads, so exports such as CSV files are
+// written straight into the user's Downloads folder here. Never overwrites: "name (1).csv", "name (2).csv"…
+#[cfg(desktop)]
+#[tauri::command]
+fn save_to_downloads(app: tauri::AppHandle, name: String, text: String) -> Result<String, String> {
+  use tauri::Manager;
+  let dir = app.path().download_dir().map_err(|e| e.to_string())?;
+  let safe: String = name.chars().map(|c| if "\\/:*?\"<>|".contains(c) || c.is_control() { '_' } else { c }).collect();
+  let safe = if safe.trim().is_empty() { "export.csv".to_string() } else { safe };
+  let (stem, ext) = match safe.rfind('.') {
+    Some(i) if i > 0 => (safe[..i].to_string(), safe[i..].to_string()),
+    _ => (safe.clone(), String::new()),
+  };
+  let mut path = dir.join(&safe);
+  let mut n = 1;
+  while path.exists() {
+    path = dir.join(format!("{stem} ({n}){ext}"));
+    n += 1;
+  }
+  std::fs::write(&path, text.as_bytes()).map_err(|e| e.to_string())?;
+  Ok(path.to_string_lossy().into_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let builder = tauri::Builder::default()
     .plugin(tauri_plugin_process::init())
     .plugin(tauri_plugin_opener::init());
+
+  #[cfg(desktop)]
+  let builder = builder.invoke_handler(tauri::generate_handler![save_to_downloads]);
 
   #[cfg(mobile)]
   let builder = builder

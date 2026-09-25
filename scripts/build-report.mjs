@@ -48,7 +48,8 @@ function lines(file) {
 }
 
 const suites = [
-  { id: "desktop", name: "Computer — end-to-end (Windows app UI in Microsoft Edge)", data: playwright("desktop.json"), platform: "Computer" },
+  { id: "desktop", name: "Computer — end-to-end in Microsoft Edge (local build)", data: playwright("desktop.json"), platform: "Computer" },
+  { id: "desktop-app", name: "Computer — the same end-to-end suite inside the installed Windows desktop app", data: playwright("desktop-app.json"), platform: "Computer" },
   { id: "web", name: "Computer — the same end-to-end suite against the live web version (GitHub Pages)", data: playwright("web.json"), platform: "Computer" },
   { id: "update", name: "Computer — real online update of the installed Windows app", data: lines("desktop-update.txt"), platform: "Computer" },
   { id: "android-full", name: "Android — the same end-to-end suite inside the Android app (tablet emulator)", data: playwright("android-full.json"), platform: "Android" },

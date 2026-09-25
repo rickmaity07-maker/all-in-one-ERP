@@ -62,6 +62,19 @@ export function downloadCsv(filename: string, rows: Row[], columns: { key: strin
     android.saveFile(filename, "text/csv", toBase64("\uFEFF" + csv));
     return;
   }
+  if (isTauri()) {
+    // Windows app: its WebView ignores blob downloads, so the app writes the file into Downloads itself.
+    void (async () => {
+      const [{ invoke }, { toast }] = await Promise.all([import("@tauri-apps/api/core"), import("@/components/ui")]);
+      try {
+        const path = await invoke<string>("save_to_downloads", { name: filename, text: "\uFEFF" + csv });
+        toast(`Saved to ${path}`);
+      } catch (e) {
+        toast(errorMessage(e), "error");
+      }
+    })();
+    return;
+  }
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const a = document.createElement("a");
   a.href = url;
