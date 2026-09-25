@@ -3,7 +3,7 @@ import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
-import { test, hasOwner, owner, login, adb, androidDevice, androidPage, returnToApp, ANDROID_PKG, onAndroid } from "../e2e/helpers";
+import { test, hasOwner, owner, login, adb, clearAppStorage, androidDevice, androidPage, returnToApp, ANDROID_PKG, onAndroid } from "../e2e/helpers";
 
 // Tests that only make sense inside the Android app: hardware keys, rotation, the on-screen keyboard,
 // system pickers and dialogs, app lifecycle, connectivity, permissions and the APK itself.
@@ -67,7 +67,7 @@ test("cold start: opens to the login screen quickly", async () => {
   expect(total, `launch took ${total} ms`).toBeLessThan(15_000);
   const page = await androidPage();
   await page.goto("/");
-  await page.evaluate(() => localStorage.clear());
+  await clearAppStorage(page);
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Secure Sign In" })).toBeVisible();
 });

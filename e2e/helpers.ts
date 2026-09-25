@@ -59,6 +59,24 @@ export async function androidPage(): Promise<Page> {
   return appPage;
 }
 
+// Signs the app out the hard way: wipes everything it stores (localStorage and the IndexedDB session store).
+export async function clearAppStorage(page: Page) {
+  await page.evaluate(async () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    await new Promise<void>((resolve) => {
+      const req = indexedDB.open("erp-auth", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("kv");
+      req.onerror = () => resolve();
+      req.onsuccess = () => {
+        const tx = req.result.transaction("kv", "readwrite");
+        tx.objectStore("kv").clear();
+        tx.oncomplete = tx.onerror = () => { req.result.close(); resolve(); };
+      };
+    });
+  });
+}
+
 // Brings the app back to the front (after the browser or a system dialog opened).
 export async function returnToApp() {
   if (!onAndroid) return;
@@ -85,10 +103,7 @@ export const test = base.extend({
     const app = await androidPage();
     // Each test starts signed out on the login screen, like a fresh browser context.
     await app.goto("/");
-    await app.evaluate(() => {
-      localStorage.clear();
-      sessionStorage.clear();
-    });
+    await clearAppStorage(app);
     await app.goto("/");
     await provide(app);
     app.removeAllListeners();
