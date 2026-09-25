@@ -21,7 +21,8 @@ test.describe("Smoke: every module loads", () => {
         const before = errors.length;
         await page.goto(route);
         await expect(page.locator("main").first()).toBeVisible();
-        await page.waitForLoadState("networkidle");
+        // Live connections can keep the network busy (e.g. on a phone); the checks below catch real problems.
+        await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
         await expect(page.getByText(/Syncing|Loading/).first()).toHaveCount(0, { timeout: 15_000 }).catch(() => {});
         const toasts = await page.locator(".fixed.bottom-6 .bg-red-50").allInnerTexts();
         if (toasts.length) failures.push(`${route}: ${toasts.join(" | ")}`);

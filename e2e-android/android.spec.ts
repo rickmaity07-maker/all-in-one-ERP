@@ -161,7 +161,7 @@ test("going to the background and coming back keeps you signed in", async ({ pag
   await returnToApp();
   await expect.poll(appInFront).toBe(true);
   await expect(page).toHaveURL(/\/finance/);
-  await expect(page.getByText("Billing & Finance").first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Financial Dashboard" })).toBeVisible();
 });
 
 test("after the app is closed completely it reopens already signed in", async ({ page }) => {
@@ -176,7 +176,8 @@ test("offline: a clear message instead of a crash, and it recovers when back onl
   await login(page, owner);
   await adb("cmd connectivity airplane-mode enable");
   await page.waitForTimeout(3000);
-  await page.getByRole("link", { name: /Notice Board/ }).first().click().catch(() => page.goto("/announcements"));
+  // The screens themselves are bundled in the app, so they still open; the data calls fail.
+  await page.goto("/announcements");
   await expect(page.locator(".fixed.bottom-6 .bg-red-50").first().or(page.getByText(/Failed to fetch|network|offline/i).first())).toBeVisible({ timeout: 30_000 });
   expect(await appInFront(), "app is still running").toBe(true);
   await adb("cmd connectivity airplane-mode disable");

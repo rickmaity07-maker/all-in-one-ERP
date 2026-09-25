@@ -59,7 +59,7 @@ export function downloadCsv(filename: string, rows: Row[], columns: { key: strin
   const android = androidBridge();
   if (android) {
     // BOM so spreadsheet apps on the phone read UTF-8 names correctly.
-    android.saveFile(filename, "text/csv", toBase64("﻿" + csv));
+    android.saveFile(filename, "text/csv", toBase64("\uFEFF" + csv));
     return;
   }
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -84,6 +84,8 @@ export function printDocument(title: string, bodyHtml: string) {
     .page{page-break-after:always;break-after:page} .page:last-child{page-break-after:auto;break-after:auto}
     .brand{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #6441A5;padding-bottom:16px;margin-bottom:24px}
   </style></head><body>${bodyHtml}</body></html>`;
+  // Announced so automated tests can check what was printed without a printer.
+  window.dispatchEvent(new CustomEvent("erp:print", { detail: { title, html } }));
   const android = androidBridge();
   if (android) {
     // Android's own print dialog (printers and "Save as PDF").
@@ -108,6 +110,7 @@ export function printDocument(title: string, bodyHtml: string) {
 }
 
 export async function openExternal(url: string) {
+  window.dispatchEvent(new CustomEvent("erp:open-external", { detail: { url } }));
   if (isTauri()) {
     const { openUrl } = await import("@tauri-apps/plugin-opener");
     await openUrl(url);

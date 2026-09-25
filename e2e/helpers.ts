@@ -44,21 +44,11 @@ export async function androidPage(): Promise<Page> {
   appPage = await webview.page();
   const goto = appPage.goto.bind(appPage);
   appPage.goto = (url, options) => goto(url.startsWith("/") ? ANDROID_ORIGIN + url : url, options);
-  // Record URLs the app hands to the system (openUrl → browser), so tests can check what was opened.
+  // Record what the app prints and which URLs it hands to the system (the browser), so tests can check them.
   await appPage.addInitScript(() => {
-    const w = window as unknown as { __TAURI_INTERNALS__?: { invoke: (cmd: string, args?: Record<string, unknown>) => unknown }; __opened?: string[] };
-    const hook = () => {
-      const t = w.__TAURI_INTERNALS__;
-      if (!t || (t as { __hooked?: boolean }).__hooked) return;
-      const real = t.invoke.bind(t);
-      t.invoke = (cmd, args) => {
-        if (cmd.startsWith("plugin:opener|open_url")) (w.__opened ??= []).push(String(args?.url));
-        return real(cmd, args);
-      };
-      (t as { __hooked?: boolean }).__hooked = true;
-    };
-    hook();
-    document.addEventListener("DOMContentLoaded", hook);
+    const w = window as unknown as { __printed?: string[]; __opened?: string[] };
+    window.addEventListener("erp:print", (e) => (w.__printed ??= []).push((e as CustomEvent).detail.html));
+    window.addEventListener("erp:open-external", (e) => (w.__opened ??= []).push((e as CustomEvent).detail.url));
   });
   return appPage;
 }
@@ -211,19 +201,7 @@ export async function inviteUser(page: Page, user: TestUser, role: string) {
 // Printing opens the system dialog, which would block a test. Capture the printed HTML instead:
 // call before navigating, then read with printedDocuments(page).
 export async function capturePrints(page: Page) {
-  if (onAndroid) {
-    // The app prints through its native bridge (Android print dialog); record what it was given.
-    await page.addInitScript(() => {
-      const w = window as unknown as { AndroidBridge?: { print(h: string, t: string): void; saveFile(n: string, m: string, b: string): string }; __printed?: string[] };
-      const real = w.AndroidBridge;
-      if (!real || (real as { __stub?: boolean }).__stub) return;
-      Object.defineProperty(window, "AndroidBridge", {
-        configurable: true,
-        value: { __stub: true, print: (html: string) => (w.__printed ??= []).push(html), saveFile: (n: string, m: string, b: string) => real.saveFile(n, m, b) },
-      });
-    });
-    return;
-  }
+  if (onAndroid) return; // recorded by androidPage() from the app's "erp:print" event
   await page.addInitScript(() => {
     const desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "contentWindow")!;
     Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
@@ -244,5 +222,13 @@ export async function capturePrints(page: Page) {
 
 export async function printedDocuments(page: Page): Promise<string[]> {
   await page.waitForTimeout(600);
+  if (onAndroid) {
+    // Close Android's print dialog and come back to the app.
+    await page.waitForTimeout(1500);
+    if (!(await adb("dumpsys activity activities | grep -m1 -E 'ResumedActivity'")).includes(ANDROID_PKG)) {
+      await adb("input keyevent KEYCODE_BACK");
+      await returnToApp();
+    }
+  }
   return page.evaluate(() => (window as unknown as { __printed?: string[] }).__printed ?? []);
 }

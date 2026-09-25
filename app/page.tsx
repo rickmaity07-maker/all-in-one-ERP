@@ -77,7 +77,11 @@ export default function LoginScreen() {
         setPassword("");
         return;
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        // A dead mobile connection can leave the request hanging; don't spin forever.
+        const timeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Could not reach the server. Check your internet connection and try again.")), 25_000)
+        );
+        const { error } = await Promise.race([supabase.auth.signInWithPassword({ email, password }), timeout]);
         if (error) throw error;
       }
       router.push("/dashboard");

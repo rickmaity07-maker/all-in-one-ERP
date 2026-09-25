@@ -16,7 +16,7 @@ export default defineConfig({
   expect: { timeout: 20_000 },
   fullyParallel: false,
   workers: 1,
-  reporter: [["list"], ["json", { outputFile: `test-results/android-${suite}.json` }], ["html", { open: "never", outputFolder: `playwright-report-android-${suite}` }]],
+  reporter: [["list"], ["json", { outputFile: `reports/android-${suite}.json` }], ["html", { open: "never", outputFolder: `playwright-report-android-${suite}` }]],
   use: {
     baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
     trace: "retain-on-failure",

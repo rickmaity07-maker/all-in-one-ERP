@@ -14,7 +14,7 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   fullyParallel: false,
   workers: 1,
-  reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
+  reporter: [["list"], ["json", { outputFile: "reports/desktop.json" }], ["html", { open: "never", outputFolder: "playwright-report" }]],
   use: {
     baseURL: remote ?? "http://localhost:3000",
     channel: "msedge",

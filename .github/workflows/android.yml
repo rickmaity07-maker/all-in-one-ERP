@@ -145,4 +145,5 @@ jobs:
           name: android-test-results-${{ matrix.suite }}
           path: |
             test-results/
+            reports/
             playwright-report-android-${{ matrix.suite }}/
