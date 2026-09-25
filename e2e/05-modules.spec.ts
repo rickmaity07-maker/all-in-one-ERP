@@ -473,7 +473,14 @@ test("calendar: book a slot, see it, delete it", async ({ page }) => {
   await page.getByLabel("Event Type").selectOption("meeting");
   await page.getByRole("button", { name: "Save to Calendar" }).click();
   await expectToast(page, "Event saved.");
-  await page.getByRole("button", { name: new RegExp(title) }).first().click();
+  // Busy days show 3 events plus "+N more", which opens the full list for that day.
+  const chip = page.getByRole("button", { name: new RegExp(title) }).first();
+  if (!(await chip.isVisible())) {
+    await page.locator(".ring-2").getByRole("button", { name: /^\+\d+ more$/ }).click();
+    await page.getByRole("dialog").getByRole("button", { name: new RegExp(title) }).click();
+  } else {
+    await chip.click();
+  }
   await page.getByRole("button", { name: "Delete event" }).click();
   await expectToast(page, "Event deleted.");
 });

@@ -27,6 +27,8 @@ export default function CalendarPortal() {
   const events = useTable("calendar_events", { orderBy: "event_date", ascending: true });
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  // Day whose full event list is open ("+N more").
+  const [dayList, setDayList] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ event_title: "", event_date: "", start_time: "", event_type: "lecture", location: "", description: "" });
   const [selected, setSelected] = useState<Row | null>(null);
@@ -78,6 +80,20 @@ export default function CalendarPortal() {
             <Field label="Details"><textarea rows={2} className={inputClass} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field>
             <SubmitButton busy={busy}>Save to Calendar</SubmitButton>
           </form>
+        </Modal>
+      )}
+
+      {dayList && (
+        <Modal title={`Events on ${fmtDate(dayList + "T12:00")}`} icon={CalendarDays} onClose={() => setDayList(null)}>
+          <div className="space-y-2">
+            {eventsOn(dayList).map((evt) => (
+              <button type="button" key={evt.id} onClick={() => { setDayList(null); setSelected(evt); }} className="w-full flex items-center gap-3 p-3 rounded-xl border border-slate-100 hover:border-indigo-200 text-left text-sm">
+                <span className={`w-3 h-3 rounded shrink-0 ${styleFor(evt.event_type)}`} />
+                <span className="font-bold text-slate-800 min-w-0 [overflow-wrap:anywhere]">{evt.event_title}</span>
+                <span className="ml-auto text-xs text-slate-400 shrink-0">{evt.start_time || "All day"}</span>
+              </button>
+            ))}
+          </div>
         </Modal>
       )}
 
@@ -180,11 +196,15 @@ export default function CalendarPortal() {
                     <span className={`text-xs font-bold mb-2 ${isToday ? "text-indigo-600" : "text-slate-700"}`}>{inMonth ? dayNum : ""}</span>
                     <div className="space-y-1">
                       {dayEvents.slice(0, 3).map((evt) => (
-                        <div key={evt.id} onClick={() => setSelected(evt)} className={`text-[10px] font-bold px-2 py-1.5 rounded-lg text-white shadow-sm truncate cursor-pointer hover:opacity-80 ${styleFor(evt.event_type)}`}>
+                        <button type="button" key={evt.id} onClick={() => setSelected(evt)} title={evt.event_title} className={`block w-full text-left text-[10px] font-bold px-2 py-1.5 rounded-lg text-white shadow-sm truncate cursor-pointer hover:opacity-80 ${styleFor(evt.event_type)}`}>
                           {evt.start_time ? `${evt.start_time} ` : ""}{evt.event_title}
-                        </div>
+                        </button>
                       ))}
-                      {dayEvents.length > 3 && <div className="text-[10px] font-bold text-slate-400 px-1">+{dayEvents.length - 3} more</div>}
+                      {dayEvents.length > 3 && (
+                        <button type="button" onClick={() => setDayList(key)} className="text-[10px] font-bold text-indigo-600 hover:underline px-1">
+                          +{dayEvents.length - 3} more
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

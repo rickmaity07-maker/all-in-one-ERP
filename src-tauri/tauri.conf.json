@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "all-in-one-erp",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "identifier": "com.allinoneerp.app",
   "build": {
     "frontendDist": "../out",
