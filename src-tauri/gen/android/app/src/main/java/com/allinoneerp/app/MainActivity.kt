@@ -57,16 +57,14 @@ class MainActivity : TauriActivity() {
   // navigator.onLine and online/offline events (the "You're offline" notice) work like in a browser.
   private fun watchConnectivity(webView: WebView) {
     val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-    val update = {
-      val caps = cm.getNetworkCapabilities(cm.activeNetwork)
-      val online = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-      runOnUiThread { webView.setNetworkAvailable(online) }
-    }
-    update()
+    val report = { online: Boolean -> runOnUiThread { webView.setNetworkAvailable(online) } }
+    report(cm.getNetworkCapabilities(cm.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true)
+    // Use what each callback reports: in onLost, activeNetwork can still point at the network being lost.
     cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-      override fun onAvailable(network: Network) = update()
-      override fun onLost(network: Network) = update()
-      override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = update()
+      override fun onAvailable(network: Network) = report(true)
+      override fun onLost(network: Network) = report(false)
+      override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) =
+        report(caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET))
     })
   }
 

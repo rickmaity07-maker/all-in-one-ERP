@@ -8,7 +8,7 @@ import { test, hasOwner, owner, login, adb, clearAppStorage, androidDevice, andr
 // Tests that only make sense inside the Android app: hardware keys, rotation, the on-screen keyboard,
 // system pickers and dialogs, app lifecycle, connectivity, permissions and the APK itself.
 // Run with: E2E_ANDROID_PKG=com.allinoneerp.app.debug npx playwright test -c playwright.android.config.ts
-test.describe.configure({ mode: "serial" });
+// Tests are independent (each signs in itself), so one failure doesn't hide the rest.
 test.skip(!onAndroid, "Set E2E_ANDROID_PKG and connect an emulator or phone (adb devices).");
 test.skip(!hasOwner, "Set E2E_OWNER_EMAIL and E2E_OWNER_PASSWORD");
 test.setTimeout(180_000);
@@ -21,9 +21,14 @@ const noHorizontalScroll = (page: Page) => page.evaluate(() => document.document
 
 // Screen bounds of the app's WebView (from the accessibility tree), for real finger taps.
 async function webViewBounds() {
-  await adb("uiautomator dump /sdcard/ui.xml");
-  const xml = await adb("cat /sdcard/ui.xml");
-  const m = xml.match(/class="android\.webkit\.WebView"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
+  // uiautomator occasionally returns an empty or partial tree (e.g. mid-animation); try a few times.
+  let m: RegExpMatchArray | null = null;
+  for (let i = 0; i < 6 && !m; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 1000));
+    await adb("uiautomator dump /sdcard/ui.xml");
+    const xml = await adb("cat /sdcard/ui.xml");
+    m = xml.match(/class="(?:android\.webkit\.WebView|[\w.]*RustWebView)"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
+  }
   if (!m) throw new Error("WebView not found in the UI tree");
   const [x1, y1, x2, y2] = m.slice(1).map(Number);
   return { x1, y1, x2, y2 };
@@ -141,8 +146,12 @@ test("printing opens Android's print dialog", async ({ page }) => {
   await login(page, owner);
   await page.evaluate(() => (window as unknown as { AndroidBridge: { print(h: string, t: string): void } }).AndroidBridge.print("<h1>Invoice test</h1>", "Invoice test"));
   await expect.poll(async () => /printspooler/i.test(await resumed()), { timeout: 20_000 }).toBe(true);
-  await adb("input keyevent KEYCODE_BACK");
-  await expect.poll(appInFront, { timeout: 15_000 }).toBe(true);
+  // Back closes the printer drop-down first, then the print screen, returning to the app.
+  for (let i = 0; i < 4 && !(await appInFront()); i++) {
+    await adb("input keyevent KEYCODE_BACK");
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  expect(await appInFront(), "Back returns from the print screen to the app").toBe(true);
 });
 
 test("CSV exports are real files in the phone's Downloads folder", async ({ page }) => {
