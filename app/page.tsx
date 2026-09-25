@@ -86,7 +86,14 @@ export default function LoginScreen() {
       }
       router.push("/dashboard");
     } catch (error: unknown) {
-      setErrorMsg(error instanceof Error ? error.message : "Failed to authenticate. Please check your credentials.");
+      const message = error instanceof Error ? error.message : "";
+      // The browser reports a refused/unreachable request as "Failed to fetch" (e.g. the sign-in service's
+      // rate limit for a shared school network, or no connection) — say what the person can do instead.
+      setErrorMsg(
+        /failed to fetch|network|load failed|rate limit|too many/i.test(message)
+          ? "Couldn't reach the sign-in service. Check your connection; if many people are signing in on this network at once, wait a minute and try again."
+          : message || "Failed to authenticate. Please check your credentials."
+      );
     } finally {
       setIsLoading(false);
     }
