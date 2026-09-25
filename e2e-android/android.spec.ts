@@ -80,6 +80,7 @@ test("content is not drawn under the status bar or navigation bar", async () => 
 });
 
 test("hardware back button goes back through pages, then leaves the app", async ({ page }) => {
+  await adb("logcat -c -b crash");
   await login(page, owner);
   await page.goto("/announcements");
   await page.goto("/finance");
@@ -90,7 +91,12 @@ test("hardware back button goes back through pages, then leaves the app", async 
   // Keep pressing until history runs out: the app then goes to the background instead of showing a blank page.
   for (let i = 0; i < 6 && (await appInFront()); i++) await adb("input keyevent KEYCODE_BACK");
   expect(await appInFront(), "app left the foreground").toBe(false);
+  // It goes to the background rather than crashing or being torn down.
+  await page.waitForTimeout(3000);
+  expect((await adb(`pidof ${ANDROID_PKG}`)).trim(), "app process still alive").not.toBe("");
+  expect(await adb("logcat -d -b crash"), "no crash while leaving").not.toContain(ANDROID_PKG);
   await returnToApp();
+  await expect(greeting(page)).toBeVisible();
 });
 
 test("rotation keeps the page and what was typed, and the layout still fits", async ({ page }) => {

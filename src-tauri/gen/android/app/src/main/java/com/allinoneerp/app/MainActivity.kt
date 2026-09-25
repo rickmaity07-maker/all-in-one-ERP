@@ -36,6 +36,14 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  // Back on the first screen: send the app to the background (like Home) instead of destroying the
+  // activity. Destroying it tears down the Rust runtime mid-flight and can crash on the way out;
+  // staying alive also makes reopening instant and keeps the session.
+  @Deprecated("Called by Tauri's back handler when the WebView has no history left")
+  override fun onBackPressed() {
+    moveTaskToBack(true)
+  }
+
   override fun onWebViewCreate(webView: WebView) {
     webView.addJavascriptInterface(Bridge(), "AndroidBridge")
   }

@@ -29,6 +29,7 @@ const ANDROID_ORIGIN = process.env.E2E_ANDROID_ORIGIN ?? "http://tauri.localhost
 
 let device: AndroidDevice | null = null;
 let appPage: Page | null = null;
+let appPid = "";
 export async function androidDevice() {
   if (!device) [device] = await _android.devices();
   if (!device) throw new Error("No Android device/emulator found (adb devices).");
@@ -39,13 +40,14 @@ export const adb = async (cmd: string) => (await (await androidDevice()).shell(c
 export async function androidPage(): Promise<Page> {
   const d = await androidDevice();
   // Reuse the attached page only while the app process is still alive.
-  const alive = (await d.shell(`pidof ${ANDROID_PKG}`)).toString().trim() !== "";
-  if (appPage && !appPage.isClosed() && alive) return appPage;
-  if (appPage && !alive) console.warn("Android app process was not running; relaunching it.");
+  const pid = (await d.shell(`pidof ${ANDROID_PKG}`)).toString().trim();
+  if (appPage && !appPage.isClosed() && pid && pid === appPid) return appPage;
+  if (appPage && !pid) console.warn("Android app process was not running; relaunching it.");
   appPage = null;
   await d.shell(`am start -W -n ${ANDROID_PKG}/com.allinoneerp.app.MainActivity`);
   const webview = await d.webView({ pkg: ANDROID_PKG }, { timeout: 60_000 });
   appPage = await webview.page();
+  appPid = (await d.shell(`pidof ${ANDROID_PKG}`)).toString().trim();
   const goto = appPage.goto.bind(appPage);
   appPage.goto = (url, options) => goto(url.startsWith("/") ? ANDROID_ORIGIN + url : url, options);
   // Record what the app prints and which URLs it hands to the system (the browser), so tests can check them.
