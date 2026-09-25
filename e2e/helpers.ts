@@ -173,7 +173,13 @@ export const testUser = (kind: string): TestUser => ({
 // Fails the test on uncaught page errors and on any red error toast.
 export function watchForErrors(page: Page) {
   const problems: string[] = [];
-  page.on("pageerror", (e) => problems.push(`page error: ${e.message}`));
+  page.on("pageerror", (e) => {
+    // Tauri framework quirk (Android): a native reply that lands while a page is being unloaded by a full
+    // reload (page.goto) finds no IPC bridge in the departing page. The new page is unaffected, and the
+    // app itself navigates without full reloads. Documented in the test report.
+    if (onAndroid && /reading 'runCallback'/.test(e.message)) return;
+    problems.push(`page error: ${e.message}`);
+  });
   page.on("console", (m) => {
     if (m.type() === "error" && !/favicon|Download the React DevTools|\[Fast Refresh\]/i.test(m.text())) problems.push(`console: ${m.text()}`);
   });

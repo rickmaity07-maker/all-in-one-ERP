@@ -3,7 +3,7 @@ import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
-import { test, hasOwner, owner, login, adb, clearAppStorage, androidDevice, androidPage, returnToApp, ANDROID_PKG, onAndroid } from "../e2e/helpers";
+import { test, hasOwner, owner, login, adb, clearAppStorage, androidPage, returnToApp, ANDROID_PKG, onAndroid } from "../e2e/helpers";
 
 // Tests that only make sense inside the Android app: hardware keys, rotation, the on-screen keyboard,
 // system pickers and dialogs, app lifecycle, connectivity, permissions and the APK itself.
@@ -233,20 +233,28 @@ test("Settings shows the Android version and checks GitHub for a newer APK", asy
   await expect(checkBtn.or(page.getByRole("button", { name: "Download update" }).first()).first()).toBeVisible({ timeout: 30_000 });
   if (await checkBtn.isVisible()) await checkBtn.click();
   // The test build is numbered below the published release, so an update must be offered as an APK download.
-  if (process.env.E2E_ANDROID_VERSION === "0.0.1") {
+  // The test build is numbered 0.0.1, so an update is due whenever the latest release carries an APK.
+  const latest = await (await fetch("https://github.com/rickmaity07-maker/all-in-one-ERP/releases/latest/download/latest.json")).json();
+  const apk = `https://github.com/rickmaity07-maker/all-in-one-ERP/releases/download/v${latest.version}/all-in-one-erp-${latest.version}.apk`;
+  const apkPublished = (await fetch(apk, { method: "HEAD" })).ok;
+  if (process.env.E2E_ANDROID_VERSION === "0.0.1" && apkPublished) {
     const download = page.getByRole("button", { name: "Download update" }).first();
     await expect(download).toBeVisible({ timeout: 30_000 });
     await download.click();
     await expect.poll(() => page.evaluate(() => (window as unknown as { __opened?: string[] }).__opened ?? []), { timeout: 15_000 })
       .toContainEqual(expect.stringMatching(/\.apk$/));
     await expect(page.getByText(/downloading in your browser/i).first()).toBeVisible();
+    await adb("am force-stop com.android.chrome");
     await returnToApp();
   } else {
-    await expect(page.getByText(/latest version|ready to install/i).first()).toBeVisible({ timeout: 30_000 });
+    // No APK published yet: the app must say it's up to date rather than offer a broken download.
+    await expect(page.getByText(/latest version/i).first()).toBeVisible({ timeout: 30_000 });
   }
 });
 
 // ---------- Installing and updating the APK ----------
+// Installs with the adb command-line tool: streaming a 100+ MB APK through Playwright's adb client can break (EPIPE).
+const adbInstall = (apk: string) => execSync(`adb install -r "${apk}"`, { stdio: "pipe", timeout: 240_000 });
 const TEST_APK = process.env.E2E_TEST_APK ?? "";
 const RELEASE_APK = process.env.E2E_RELEASE_APK ?? "";
 const APKSIGNER = process.env.E2E_APKSIGNER ?? "";
@@ -254,7 +262,7 @@ const APKSIGNER = process.env.E2E_APKSIGNER ?? "";
 test("updating the app over an installed copy keeps the user signed in", async ({ page }) => {
   test.skip(!TEST_APK, "E2E_TEST_APK not set");
   await login(page, owner);
-  await (await androidDevice()).installApk(TEST_APK, { args: ["-r"] });
+  adbInstall(TEST_APK);
   await adb(`am start -W -n ${ANDROID_PKG}/com.allinoneerp.app.MainActivity`);
   const fresh = await androidPage();
   await expect(greeting(fresh)).toBeVisible({ timeout: 30_000 });
@@ -268,7 +276,8 @@ test("a copy signed with someone else's key is refused (no hijacked updates)", a
   const forged = join(dir, "forged.apk");
   copyFileSync(TEST_APK, forged);
   execSync(`"${APKSIGNER}" sign --ks "${ks}" --ks-pass pass:attacker "${forged}"`, { stdio: "ignore" });
-  const err = await (await androidDevice()).installApk(forged, { args: ["-r"] }).then(() => "", (e: Error) => e.message);
+  let err = "";
+  try { adbInstall(forged); } catch (e) { err = String((e as { stdout?: Buffer; message: string }).stdout ?? "") + (e as Error).message; }
   expect(err).toMatch(/INSTALL_FAILED_UPDATE_INCOMPATIBLE|signatures do not match/i);
   expect(await adb(`dumpsys package ${ANDROID_PKG}`)).toContain(`Package [${ANDROID_PKG}]`);
 });
@@ -279,7 +288,7 @@ test("the release APK is signed with the release key and starts without crashing
   expect(certs).toMatch(/Verified using v2 scheme \(APK Signature Scheme v2\): true/);
   expect(certs).toContain("CN=All-In-One ERP");
   const releasePkg = ANDROID_PKG.replace(/\.debug$/, "");
-  await (await androidDevice()).installApk(RELEASE_APK, { args: ["-r"] });
+  adbInstall(RELEASE_APK);
   await adb("logcat -c");
   await adb(`am start -W -n ${releasePkg}/com.allinoneerp.app.MainActivity`);
   await expect.poll(async () => (await resumed()).includes(releasePkg), { timeout: 20_000 }).toBe(true);
