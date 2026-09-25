@@ -236,7 +236,8 @@ export default function ELearningPortal() {
       ) : activeTab === "lectures" ? (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className={`${staff ? "md:col-span-2" : "md:col-span-3"} bg-linear-to-br from-indigo-900 to-[#2A0845] rounded-4xl p-10 flex flex-col justify-between aspect-video relative overflow-hidden shadow-xl`}>
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
+            {/* Above the title block (z-20), so a long lecture title can never cover the Play button. */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
               <button
                 onClick={() => (featured ? openMaterial(featured) : toast("No lectures uploaded yet.", "error"))}
                 className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-md hover:scale-110 transition-all border border-white/30 shadow-2xl"
@@ -247,7 +248,7 @@ export default function ELearningPortal() {
             </div>
             <div className="mt-auto relative z-10">
               <span className="bg-pink-500 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-lg mb-3 inline-block">Latest Lecture</span>
-              <h2 className="text-2xl md:text-3xl font-black text-white">{featured?.title ?? "No lectures yet"}</h2>
+              <h2 className="text-2xl md:text-3xl font-black text-white line-clamp-2 [overflow-wrap:anywhere]">{featured?.title ?? "No lectures yet"}</h2>
               {featured && <p className="text-white/60 text-sm mt-1">Added {fmtDate(featured.created_at)}</p>}
             </div>
           </div>

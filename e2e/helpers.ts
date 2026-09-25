@@ -233,9 +233,14 @@ export function watchForErrors(page: Page) {
     if (onAndroid && /reading 'runCallback'/.test(e.message)) return;
     problems.push(`page error: ${e.message}`);
   });
+  // Remember which requests failed, so "Failed to load resource" console errors can name the URL.
+  const failed: string[] = [];
+  page.on("response", (r) => {
+    if (r.status() >= 400) failed.push(`${r.status()} ${r.request().method()} ${r.url().split("?")[0]}`);
+  });
   page.on("console", (m) => {
     // ERR_NETWORK_CHANGED: the device's network reconnected (emulators do this); not an app error.
-    if (m.type() === "error" && !/favicon|Download the React DevTools|\[Fast Refresh\]|ERR_NETWORK_CHANGED/i.test(m.text())) problems.push(`console: ${m.text()}`);
+    if (m.type() === "error" && !/favicon|Download the React DevTools|\[Fast Refresh\]|ERR_NETWORK_CHANGED/i.test(m.text())) problems.push(`console: ${m.text()}${/Failed to load resource/.test(m.text()) && failed.length ? ` [${failed.at(-1)}]` : ""}`);
   });
   return problems;
 }
@@ -274,7 +279,8 @@ export async function logout(page: Page) {
 }
 
 export async function expectToast(page: Page, text: string | RegExp, timeout?: number) {
-  await expect(page.locator(".fixed.bottom-6").getByText(text).last()).toBeVisible({ timeout });
+  // The Android emulator's network is slow (sign-in requests take 5-8 s), so allow longer there.
+  await expect(page.locator(".fixed.bottom-6").getByText(text).last()).toBeVisible({ timeout: timeout ?? (onAndroid ? 45_000 : undefined) });
 }
 
 export async function expectNoErrorToast(page: Page) {
