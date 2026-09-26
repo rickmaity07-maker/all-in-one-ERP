@@ -43,6 +43,8 @@ export async function checkForUpdate(manual = false): Promise<UpdateStatus> {
     return status;
   }
   if (status.state === "downloading" || status.state === "installing") return status;
+  // A background check must not replace the "open the downloaded file" instructions.
+  if (!manual && status.state === "apk-opened") return status;
   setStatus({ state: "checking" });
   if (isAndroidApp()) {
     try {
