@@ -269,18 +269,30 @@ export async function login(page: Page, user: TestUser | string, password?: stri
   // The app may show the dashboard for a moment before redirecting to Settings, so wait for a final screen.
   const greeting = page.getByRole("heading", { name: /Good (morning|afternoon|evening)/ });
   const mustChange = page.getByText(/signed in with a temporary password/i);
-  await expect(greeting.or(mustChange)).toBeVisible();
+  await expect(greeting.or(mustChange), "signed in").toBeVisible({ timeout: onAndroid ? 45_000 : undefined }).catch(async (e) => {
+    throw new Error(`${e.message}
+On screen: ${await screenMessages(page)}`);
+  });
   if (await mustChange.isVisible()) {
     const next = `${u.password}9`;
     await page.getByLabel("New Password").fill(next);
     await page.getByLabel("Confirm Password").fill(next);
     await page.getByRole("button", { name: "Change Password" }).click();
-    await expectToast(page, "Password changed.");
+    await expectToast(page, "Password changed.").catch(async (e) => {
+      throw new Error(`${e.message}
+On screen: ${await screenMessages(page)}`);
+    });
     u.password = next;
     await page.goto("/dashboard");
   }
   await expect(page.getByRole("heading", { name: /Good (morning|afternoon|evening)/ })).toBeVisible();
   return u;
+}
+
+// Toasts and error texts currently shown, to explain a failure (Android screenshots of the WebView come out blank).
+async function screenMessages(page: Page) {
+  const texts = await page.locator(".fixed.bottom-6, [role=alert], .text-red-600, .text-red-700").allInnerTexts().catch(() => []);
+  return JSON.stringify(texts.map((t) => t.trim()).filter(Boolean)) + ` at ${page.url()}`;
 }
 
 export async function logout(page: Page) {
