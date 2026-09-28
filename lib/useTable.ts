@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import { errorMessage, type Row } from "./utils";
 import { toast } from "@/components/ui";
-import { cacheRows, cachedRows, isNetworkError, online, withId, writeOrQueue } from "./offline";
+import { cacheRows, cachedRows, isNetworkError, myQueuedOps, online, withId, writeOrQueue } from "./offline";
 
 type Options = {
   orderBy?: string;
@@ -50,7 +50,17 @@ export function useTable(table: string, { orderBy = "created_at", ascending = fa
     }
     if (!result || (result.error && isNetworkError(result.error))) {
       const cached = await cachedRows(cacheKey);
-      if (cached) return { rows: cached.rows, cachedAt: cached.at };
+      if (cached) {
+        // Apply the changes still waiting on this device, so they show after reopening the page offline.
+        let rows = cached.rows;
+        for (const op of (await myQueuedOps()).filter((o) => o.table === table && !o.error)) {
+          const vals = (Array.isArray(op.values) ? op.values : op.values ? [op.values] : []) as Row[];
+          if (op.kind === "insert") rows = ascending ? [...rows, ...vals.map((v) => ({ ...v, _pending: true }))] : [...vals.map((v) => ({ ...v, _pending: true })), ...rows];
+          if (op.kind === "update") rows = rows.map((r) => (r.id === op.id ? { ...r, ...vals[0], _pending: true } : r));
+          if (op.kind === "delete") rows = rows.filter((r) => r.id !== op.id);
+        }
+        return { rows, cachedAt: cached.at };
+      }
       if (result?.error) toast(`Could not load ${table.replace(/_/g, " ")}: you're offline.`, "error");
       return { rows: [], cachedAt: null };
     }

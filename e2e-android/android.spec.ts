@@ -60,9 +60,20 @@ test("the APK: package, version, launcher entry and only harmless permissions", 
   expect(info.match(/versionName=([\d.]+)/)?.[1], "version matches the release").toBe(process.env.E2E_ANDROID_VERSION ?? APP_VERSION);
   expect(await adb(`cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER ${ANDROID_PKG}`)).toContain("MainActivity");
   const requested = [...info.matchAll(/(android\.permission\.[A-Z_]+)/g)].map((m) => m[1]);
-  const risky = requested.filter((p) => /CAMERA|LOCATION|CONTACTS|SMS|CALL|RECORD_AUDIO|READ_EXTERNAL|WRITE_EXTERNAL|MEDIA|PHONE|CALENDAR|BODY_SENSORS/.test(p));
-  expect(risky, "no access to camera, location, contacts, files, etc.").toEqual([]);
+  // Camera (scanning a check-in QR code) and location (a driver sharing the bus position) are asked for
+  // only when those features are used; nothing else sensitive is requested at all.
+  const risky = requested.filter((p) => /CONTACTS|SMS|CALL|RECORD_AUDIO|READ_EXTERNAL|WRITE_EXTERNAL|MEDIA|PHONE|CALENDAR|BODY_SENSORS|BACKGROUND_LOCATION/.test(p));
+  expect(risky, "no access to contacts, files, microphone, etc.").toEqual([]);
+  for (const p of ["android.permission.CAMERA", "android.permission.ACCESS_FINE_LOCATION"]) {
+    expect(requested, `${p} declared`).toContain(p);
+    expect(info.includes(`${p}: granted=true`), `${p} not granted until the feature asks`).toBe(false);
+  }
   expect(requested).toContain("android.permission.INTERNET");
+});
+
+test("the app can read student ID cards: the NFC bridge answers (none/off/ready)", async ({ page }) => {
+  const status = await page.evaluate(() => (window as unknown as { AndroidBridge?: { nfcStatus?(): string } }).AndroidBridge?.nfcStatus?.());
+  expect(["none", "off", "ready"]).toContain(status);
 });
 
 test("cold start: opens to the login screen quickly", async () => {
@@ -202,6 +213,28 @@ test("offline: a clear message instead of a crash, and it recovers when back onl
   await page.waitForTimeout(5000);
   await page.goto("/announcements");
   await expect(page.getByRole("heading", { name: /Notice Board/ }).first()).toBeVisible({ timeout: 30_000 });
+});
+
+test("offline saving: a task made in airplane mode is kept on the phone, shown, and synced when back online", async ({ page }) => {
+  const title = `E2E Offline phone task ${Date.now().toString(36)}`;
+  await login(page, owner);
+  await page.goto("/tasks");
+  await expect(page.getByRole("heading", { name: /Priority Workflow/ })).toBeVisible();
+  await adb("cmd connectivity airplane-mode enable");
+  await expect(page.getByText(/You're offline/)).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Create Task" }).click();
+  await page.getByRole("dialog").getByLabel("Task Title").fill(title);
+  await page.getByRole("dialog").getByRole("button", { name: "Save to Workspace" }).click();
+  await expect(page.locator(".fixed.bottom-6").getByText(/Saved on this device/).last()).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(title)).toBeVisible();
+  await expect(page.getByText("1 waiting")).toBeVisible();
+  // Reopening the page offline still shows it, from the copy saved on the phone.
+  await page.goto("/tasks");
+  await expect(page.getByText(title)).toBeVisible({ timeout: 20_000 });
+  await adb("cmd connectivity airplane-mode disable");
+  await expect(page.locator(".fixed.bottom-6").getByText(/offline change\(s\) synced/).last()).toBeVisible({ timeout: 60_000 });
+  await page.goto("/tasks");
+  await expect(page.getByText(title)).toBeVisible({ timeout: 30_000 });
 });
 
 test("large system font size: pages still fit the screen", async ({ page }) => {

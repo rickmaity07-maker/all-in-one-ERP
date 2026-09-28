@@ -1,6 +1,6 @@
 {
   "name": "all-in-one-erp",
-  "version": "0.2.11",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "dev": "next dev",

@@ -76,6 +76,7 @@ const FEATURES = [
     "Lab hardware API: RFID door readers, 3D printers and sensors report with their own key; doors open for staff or during a booking; faults put equipment into maintenance",
     "Live presence in chat (who is online now)"]],
   ["Insight & integration", ["Retention-risk scores (attendance, grades, missing work, holds) with at-risk alerts", "Admissions forecast per programme, learned from past decisions", "Event log and outgoing webhooks for every business event", "REST API documentation (same security rules as the app)", "Nightly jobs (risk scores, holds) and nightly backups"]],
+  ["Next-level (v0.3)", ["AI assistant: questions answered from each user's own records only, read-only (Claude; switched on once an AI key is added)", "Offline mode: pages show the last copy on the device; changes made offline are saved and synced automatically", "Hindi and Bengali interface (the choice follows the account to other devices)", "Timetable rules: teachers' unavailable times, lab-only rooms; absence cover with the free, least-busy colleagues suggested", "Check-in by a code that changes every 20 s (or its QR), card taps on an Android phone (NFC) or a USB reader", "Live school bus: the driver's phone shares the position; riders and parents see arrival times and get an alert about 5 minutes before", "Interventions: from risk warning to a case with mentor, follow-ups and a before/after comparison of attendance, grades and risk", "Online fee payments by UPI, card or net banking (test mode: simulated gateway, posted to the ledger, receipts to student and parents)", "SMS & WhatsApp: opt-in per person, group broadcasts, delivery log (Twilio; switched on once keys are added)", "Digitally signed credentials (Open Badges 3.0, ES256) with a QR code, verifiable by anyone"]],
   ["Apps & delivery", ["Windows desktop app with signed online updates (one-click update & restart)", "Web version on GitHub Pages that works on phones", "Android app (APK) with Android print dialog, saving to Downloads, back button, keyboard-aware layout and in-app update check", "Strict content-security policy; secrets never shipped in the apps",
     "Offline notice on every platform; a dropped connection never signs you out",
     "Sign-in saved to disk immediately, so closing the app right after signing in keeps you signed in",
@@ -171,6 +172,12 @@ ${[
   ["Tablet", "The update notice appeared a few seconds after a page loaded and pushed the page down, so a tap could land on the wrong control", "Notice floats in a corner instead"],
   ["Tablet", "The floating update notice could cover a button at the very bottom of a page", "Pages get extra space at the bottom while the notice is showing"],
   ["Android", "An automatic update check could erase the \"open the downloaded file to install\" instructions right after tapping Download update", "Automatic checks leave those instructions in place"],
+  ["All", "Signing in could hang: the new language setting called the database from inside the sign-in event", "The call runs after sign-in has finished"],
+  ["All", "A page refresh briefly replaced the page with a loading screen, wiping messages such as the check-in confirmation", "Lists refresh in place"],
+  ["All", "An older, slower answer could overwrite newer data on a page", "Only the newest load is applied; a change saved during a load triggers another load"],
+  ["All", "A request that never got an answer left the screen waiting forever", "Reads time out after 15 s and are retried; other requests report a connection problem"],
+  ["All", "A declined card payment did not appear in the account's payment list", "The list refreshes whenever the checkout closes"],
+  ["All", "A question asked the moment the assistant opened was sent to the (not yet set up) AI service", "Questions wait for the assistant's status"],
 ].map(([w, p, f]) => `<tr><td>${w}</td><td>${p}</td><td>${f}</td></tr>`).join("")}
 </tbody></table></section>
 <section class="page"><h2>Features</h2><div class="cols">${FEATURES.map(([g, items]) => `<div><h3>${esc(g)}</h3><ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>`).join("")}</div></section>
