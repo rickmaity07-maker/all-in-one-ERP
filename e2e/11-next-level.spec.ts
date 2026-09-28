@@ -43,7 +43,8 @@ async function api(u: TestUser) {
   return {
     rpc: async (fn: string, args: object) => {
       const r = await fetch(`${SB_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: h, body: JSON.stringify(args) });
-      return { ok: r.ok, data: await r.json() };
+      const text = await r.text();
+      return { ok: r.ok, data: text ? JSON.parse(text) : null };
     },
     get: async (path: string) => (await (await fetch(`${SB_URL}/rest/v1/${path}`, { headers: h })).json()) as Record<string, unknown>[],
   };
