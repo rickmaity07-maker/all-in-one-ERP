@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { UserCheck, Save, CheckCheck, BarChart3, Loader2, AlertTriangle, Download } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useSession, isAdmin, isStaff } from "@/lib/session";
-import { useTable } from "@/lib/useTable";
+import { useTable, SAVED_OFFLINE } from "@/lib/useTable";
+import { writeOrQueue } from "@/lib/offline";
 import { ModuleShell, PageHeading, Card, Table, Loading, Empty, Badge, StatCard, toast } from "@/components/ui";
 import { downloadCsv, errorMessage, fmtDate, initials, matches, localDate, type Row } from "@/lib/utils";
 
@@ -61,9 +62,14 @@ export default function AttendancePage() {
       .map((e) => ({ class_id: activeClass, student_id: e.student_id, student_name: e.student_name, session_date: date, status: marks[e.student_id].status, note: marks[e.student_id].note || null }));
     if (!rows.length) return toast("Mark at least one student first.", "error");
     setSaving(true);
-    const { error } = await supabase.from("attendance").upsert(rows, { onConflict: "class_id,student_id,session_date" });
+    const { error, queued } = await writeOrQueue({ table: "attendance", kind: "upsert", values: rows, onConflict: "class_id,student_id,session_date", label: `Register for ${fmtDate(date)}` });
     setSaving(false);
     if (error) return toast(errorMessage(error), "error");
+    if (queued) {
+      // Show the register as taken on this device until it syncs.
+      attendance.setRows((prev) => [...prev.filter((a) => !(a.class_id === activeClass && a.session_date === date)), ...rows.map((r) => ({ ...r, id: `${r.student_id}-${date}`, _pending: true }))]);
+      return toast(SAVED_OFFLINE);
+    }
     toast(`Register saved for ${fmtDate(date)}${rows.length < roster.length ? ` (${roster.length - rows.length} unmarked)` : ""}.`);
     attendance.reload();
   };

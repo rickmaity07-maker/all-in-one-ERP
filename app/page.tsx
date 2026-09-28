@@ -6,6 +6,8 @@ import { Mail, Lock, ArrowRight, Zap, Loader2, AlertCircle, User, CheckCircle2, 
 import { createClient } from "@supabase/supabase-js";
 import { supabase, isSupabaseConfigured, supabaseUrl, supabaseAnonKey } from "@/lib/supabase";
 import { useSession, LOGIN_NOTICE_KEY } from "@/lib/session";
+import { useT } from "@/lib/i18n";
+import LanguagePicker from "@/components/LanguagePicker";
 
 // Single sign-on buttons, e.g. NEXT_PUBLIC_SSO_PROVIDERS="azure,google,saml:school.edu".
 // Each provider must also be enabled in Supabase → Authentication → Providers (SAML needs the Pro plan).
@@ -17,6 +19,7 @@ const fieldClass =
 
 export default function LoginScreen() {
   const router = useRouter();
+  const t = useT();
   const { user, loading } = useSession();
   const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [fullName, setFullName] = useState("");
@@ -121,57 +124,58 @@ export default function LoginScreen() {
             <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center mb-8 backdrop-blur-md shadow-inner border border-white/10">
               <Zap size={24} className="text-cyan-300" />
             </div>
-            <h1 className="text-4xl font-black mb-4 leading-tight">Kern OS<br />Architecture.</h1>
+            <h1 className="text-4xl font-black mb-4 leading-tight">Kern OS<br />{t("Architecture.")}</h1>
             <p className="text-white/70 font-medium leading-relaxed">
-              Welcome back to the enterprise portal. Access your curriculum, track tasks, and manage operations from a single secure endpoint.
+              {t("Welcome back to the enterprise portal. Access your curriculum, track tasks, and manage operations from a single secure endpoint.")}
             </p>
           </div>
 
           <div className="relative z-10 text-xs font-bold tracking-wider text-white/50 uppercase">
-            Database Connection:{" "}
-            {isSupabaseConfigured ? <span className="text-emerald-400 ml-1">Configured</span> : <span className="text-pink-400 ml-1">Not configured</span>}
+            {t("Database Connection:")}{" "}
+            {isSupabaseConfigured ? <span className="text-emerald-400 ml-1">{t("Configured")}</span> : <span className="text-pink-400 ml-1">{t("Not configured")}</span>}
           </div>
         </div>
 
         {/* Right Side: Login / Sign-up Form */}
         <div className="w-full md:w-1/2 p-6 md:p-12 bg-white flex flex-col justify-center">
-          <h2 className="text-2xl font-bold text-slate-800 mb-2">{mode === "signin" ? "Secure Sign In" : mode === "signup" ? "Request Access" : "Forgot Password"}</h2>
+          <div className="flex justify-end -mt-2 mb-4"><LanguagePicker /></div>
+          <h2 className="text-2xl font-bold text-slate-800 mb-2">{t(mode === "signin" ? "Secure Sign In" : mode === "signup" ? "Request Access" : "Forgot Password")}</h2>
           <p className="text-sm font-medium text-slate-500 mb-8">
-            {mode === "signin"
+            {t(mode === "signin"
               ? "Enter your credentials to access the cloud portal."
               : mode === "signup"
                 ? "An administrator approves new accounts and assigns your role."
-                : "Enter your email. An administrator will set a temporary password for you."}
+                : "Enter your email. An administrator will set a temporary password for you.")}
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {errorMsg && (
               <div className="p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-600 text-sm font-semibold">
                 <AlertCircle size={18} className="shrink-0" />
-                {errorMsg}
+                {t(errorMsg)}
               </div>
             )}
             {infoMsg && (
               <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center gap-3 text-emerald-700 text-sm font-semibold">
                 <CheckCircle2 size={18} className="shrink-0" />
-                {infoMsg}
+                {t(infoMsg)}
               </div>
             )}
 
             {mode === "signup" && (
               <div className="relative">
                 <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                <input type="text" required placeholder="Full Name" value={fullName} onChange={(e) => setFullName(e.target.value)} className={fieldClass} />
+                <input type="text" required placeholder={t("Full Name")} value={fullName} onChange={(e) => setFullName(e.target.value)} className={fieldClass} />
               </div>
             )}
             <div className="relative">
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input type="email" required placeholder="Email Address" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} />
+              <input type="email" required placeholder={t("Email Address")} value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} />
             </div>
             {mode !== "forgot" && (
             <div className="relative">
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input type="password" required minLength={8} placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} className={fieldClass} />
+              <input type="password" required minLength={8} placeholder={t("Password")} value={password} onChange={(e) => setPassword(e.target.value)} className={fieldClass} />
             </div>
             )}
             <button
@@ -180,9 +184,9 @@ export default function LoginScreen() {
               className="w-full flex items-center justify-center gap-2 bg-slate-900 text-white py-4 rounded-2xl text-sm font-bold shadow-md hover:bg-slate-800 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {isLoading ? (
-                <><Loader2 size={16} className="animate-spin" /> {mode === "signin" ? "Authenticating..." : "Sending request..."}</>
+                <><Loader2 size={16} className="animate-spin" /> {t(mode === "signin" ? "Authenticating..." : "Sending request...")}</>
               ) : (
-                <>{mode === "signin" ? "Connect to Database" : mode === "signup" ? "Request Access" : "Send Reset Request"} <ArrowRight size={16} /></>
+                <>{t(mode === "signin" ? "Connect to Database" : mode === "signup" ? "Request Access" : "Send Reset Request")} <ArrowRight size={16} /></>
               )}
             </button>
           </form>
@@ -203,11 +207,11 @@ export default function LoginScreen() {
               onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setErrorMsg(""); setInfoMsg(""); }}
               className="text-indigo-600 hover:text-indigo-800"
             >
-              {mode === "signin" ? "No account yet? Request access" : "Back to sign in"}
+              {t(mode === "signin" ? "No account yet? Request access" : "Back to sign in")}
             </button>
             {mode === "signin" && (
               <button onClick={() => { setMode("forgot"); setErrorMsg(""); setInfoMsg(""); }} className="text-slate-500 hover:text-slate-700 flex items-center gap-1">
-                <KeyRound size={14} /> Forgot password?
+                <KeyRound size={14} /> {t("Forgot password?")}
               </button>
             )}
           </div>

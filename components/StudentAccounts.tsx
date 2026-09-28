@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Wallet, Lock, Unlock, Receipt, HandCoins, CalendarClock, Plus, Printer, RefreshCw } from "lucide-react";
+import { Wallet, Lock, Unlock, Receipt, HandCoins, CalendarClock, Plus, Printer, RefreshCw, ShieldCheck } from "lucide-react";
+import PayOnline from "@/components/PayOnline";
 import { supabase } from "@/lib/supabase";
 import { Card, Table, Badge, Modal, Field, SubmitButton, Loading, Empty, StatCard, IconButton, inputClass, toast } from "@/components/ui";
 import { errorMessage, escapeHtml, fmtDate, fmtDateTime, localDate, matches, money, printDocument, type Row } from "@/lib/utils";
@@ -289,28 +290,37 @@ export function MyAccount({ studentIds, names }: { studentIds: string[]; names: 
   const [ledger, setLedger] = useState<Row[]>([]);
   const [aid, setAid] = useState<Row[]>([]);
   const [plans, setPlans] = useState<Row[]>([]);
+  const [online, setOnline] = useState<Row[]>([]);
+  const [payMode, setPayMode] = useState("off");
+  const [paying, setPaying] = useState<Row | null>(null);
   const [loading, setLoading] = useState(true);
   const key = studentIds.join(",");
 
   const fetchAll = useCallback(async () => {
     const ids = key.split(",").filter(Boolean);
-    if (!ids.length) return { a: [], l: [], d: [], p: [] };
-    const [a, l, d, p] = await Promise.all([
+    if (!ids.length) return { a: [], l: [], d: [], p: [], o: [], m: "off" };
+    const [a, l, d, p, o, m] = await Promise.all([
       supabase.from("student_balances").select("*").in("student_id", ids),
       supabase.from("ledger_entries").select("*").order("created_at"),
       supabase.from("aid_awards").select("*").in("student_id", ids).order("created_at", { ascending: false }),
       supabase.from("payment_plans").select("*, plan_installments(*)"),
+      supabase.from("payment_intents").select("*").in("student_id", ids).neq("status", "created").order("created_at", { ascending: false }).limit(10),
+      supabase.from("app_settings").select("value").eq("key", "payments_mode").maybeSingle(),
     ]);
-    return { a: a.data ?? [], l: l.data ?? [], d: d.data ?? [], p: p.data ?? [] };
+    return { a: a.data ?? [], l: l.data ?? [], d: d.data ?? [], p: p.data ?? [], o: o.data ?? [], m: String(m.data?.value ?? "off") };
   }, [key]);
   useEffect(() => {
     let cancelled = false;
     fetchAll().then((x) => {
       if (cancelled) return;
-      setAccounts(x.a); setLedger(x.l); setAid(x.d); setPlans(x.p); setLoading(false);
+      setAccounts(x.a); setLedger(x.l); setAid(x.d); setPlans(x.p); setOnline(x.o); setPayMode(x.m); setLoading(false);
     });
     return () => { cancelled = true; };
   }, [fetchAll]);
+  const reloadAll = async () => {
+    const x = await fetchAll();
+    setAccounts(x.a); setLedger(x.l); setAid(x.d); setPlans(x.p); setOnline(x.o); setPayMode(x.m);
+  };
 
   const accept = async (a: Row) => {
     const { error } = await supabase.from("aid_awards").update({ status: "accepted" }).eq("id", a.id);
@@ -324,11 +334,21 @@ export function MyAccount({ studentIds, names }: { studentIds: string[]; names: 
   if (!accounts.length) return <Empty>No student account yet. It is opened automatically when you register for a course with tuition.</Empty>;
   return (
     <div className="space-y-6">
+      {paying && (
+        <PayOnline studentId={paying.student_id} studentName={names[paying.student_id] ?? ""} balance={Number(paying.balance)}
+          onPaid={reloadAll} onClose={() => setPaying(null)} />
+      )}
       {accounts.map((acct) => {
         const entries = ledger.filter((e) => e.account_id === acct.account_id);
+        const payments = online.filter((o) => o.student_id === acct.student_id);
         return (
           <Card key={acct.account_id} title={`Account — ${names[acct.student_id] ?? ""}`} action={
-            <button onClick={() => printStatement(names[acct.student_id] ?? "", entries, Number(acct.balance))} className="flex items-center gap-2 text-sm font-bold text-indigo-600 bg-indigo-50 px-4 py-2 rounded-xl"><Printer size={16} /> Statement</button>
+            <div className="flex flex-wrap gap-2">
+              {payMode !== "off" && Number(acct.balance) > 0 && (
+                <button onClick={() => setPaying(acct)} className="flex items-center gap-2 text-sm font-bold text-white bg-emerald-600 px-4 py-2 rounded-xl hover:bg-emerald-700"><ShieldCheck size={16} /> Pay online</button>
+              )}
+              <button onClick={() => printStatement(names[acct.student_id] ?? "", entries, Number(acct.balance))} className="flex items-center gap-2 text-sm font-bold text-indigo-600 bg-indigo-50 px-4 py-2 rounded-xl"><Printer size={16} /> Statement</button>
+            </div>
           }>
             <div className="flex flex-wrap gap-2 mb-4">
               <Badge color={Number(acct.balance) > 0 ? "orange" : "green"}>Balance {money(acct.balance)}</Badge>
@@ -344,6 +364,23 @@ export function MyAccount({ studentIds, names }: { studentIds: string[]; names: 
                 </tr>
               ))}
             </Table>
+            {payments.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs font-bold uppercase text-slate-400 mb-2">Online payments</p>
+                <div className="space-y-1">
+                  {payments.map((o) => (
+                    <div key={o.id} className="flex flex-wrap items-center gap-2 text-sm">
+                      <Badge color={o.status === "succeeded" ? "green" : "red"}>{o.status === "succeeded" ? "paid" : "failed"}</Badge>
+                      <span className="font-bold">{money(o.amount)}</span>
+                      <span className="text-slate-500 uppercase text-xs">{o.method}</span>
+                      <span className="font-mono text-xs text-slate-400">{o.gateway_ref}</span>
+                      {o.failure_reason && <span className="text-xs text-red-600">{o.failure_reason}</span>}
+                      <span className="text-xs text-slate-400 ml-auto">{fmtDateTime(o.created_at)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {aid.filter((a) => a.student_id === acct.student_id).map((a) => (
               <div key={a.id} className="flex items-center justify-between p-3 rounded-xl border border-purple-100 bg-purple-50/40 text-sm mt-3">
                 <span><HandCoins size={14} className="inline mr-1 text-purple-500" /> {a.name} ({a.kind}) — <b>{money(a.amount)}</b></span>

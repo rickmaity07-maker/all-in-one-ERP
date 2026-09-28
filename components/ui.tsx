@@ -1,7 +1,12 @@
 "use client";
 
-import { cloneElement, isValidElement, useEffect, useId, useState } from "react";
+import { Children, cloneElement, isValidElement, useEffect, useId, useState } from "react";
 import { Search, X, Loader2, ShieldAlert, CheckCircle2, AlertCircle, type LucideIcon } from "lucide-react";
+import { useT } from "@/lib/i18n";
+
+// Text passed to these building blocks is shown in the chosen language (English is the key;
+// anything without a translation stays in English).
+const tx = (t: (s: string) => string, v: React.ReactNode) => (typeof v === "string" ? t(v) : v);
 
 export const inputClass =
   "w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none";
@@ -14,6 +19,7 @@ export function toast(text: string, kind: "success" | "error" = "success") {
 }
 
 export function Toaster() {
+  const tr = useT();
   const [items, setItems] = useState<ToastMsg[]>([]);
   useEffect(() => {
     const onToast = (e: Event) => {
@@ -35,7 +41,7 @@ export function Toaster() {
           }`}
         >
           {t.kind === "error" ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-          {t.text}
+          {tr(t.text)}
         </div>
       ))}
     </div>
@@ -56,22 +62,23 @@ export function Modal({
   children: React.ReactNode;
   wide?: boolean;
 }) {
+  const t = useT();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div role="dialog" aria-modal="true" aria-label={title} className="fixed md:absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-3 md:p-6" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label={t(title)} className="fixed md:absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-3 md:p-6" onClick={onClose}>
       <div
         className={`bg-white rounded-3xl p-5 md:p-8 shadow-2xl border border-slate-100 max-h-full overflow-y-auto w-full ${wide ? "max-w-160" : "max-w-110"}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-            {Icon && <Icon size={20} className="text-indigo-600" />} {title}
+            {Icon && <Icon size={20} className="text-indigo-600" />} {t(title)}
           </h3>
-          <button onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-700">
+          <button onClick={onClose} aria-label={t("Close")} className="text-slate-400 hover:text-slate-700">
             <X size={20} />
           </button>
         </div>
@@ -84,9 +91,10 @@ export function Modal({
 // Wrapping the control in <label> ties the caption to the input for screen readers (and getByLabel in tests).
 // Use group for fields that hold several buttons rather than one input.
 export function Field({ label, children, group = false }: { label: string; children: React.ReactNode; group?: boolean }) {
-  const caption = <span className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">{label}</span>;
+  const t = useT();
+  const caption = <span className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">{t(label)}</span>;
   return group ? (
-    <div role="group" aria-label={label}>
+    <div role="group" aria-label={t(label)}>
       {caption}
       {children}
     </div>
@@ -120,13 +128,14 @@ function FieldControl({ caption, children }: { caption: React.ReactNode; childre
 }
 
 export function SubmitButton({ busy, children }: { busy: boolean; children: React.ReactNode }) {
+  const t = useT();
   return (
     <button
       type="submit"
       disabled={busy}
       className="w-full mt-4 flex items-center justify-center gap-2 bg-indigo-600 text-white py-3.5 rounded-xl text-sm font-bold shadow-md hover:bg-indigo-700 transition-colors disabled:opacity-70"
     >
-      {busy ? <Loader2 size={16} className="animate-spin" /> : children}
+      {busy ? <Loader2 size={16} className="animate-spin" /> : Children.map(children, (c) => tx(t, c))}
     </button>
   );
 }
@@ -157,19 +166,20 @@ export function ModuleShell<T extends string>({
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const tr = useT();
   const groups = Array.from(new Set(tabs.map((t) => t.group ?? "Views")));
   return (
     <div className="flex h-full w-full overflow-hidden relative">
       <aside className="hidden md:flex w-72 bg-white/80 backdrop-blur-xl border-r border-slate-100 flex-col shrink-0 z-10 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
         <div className="h-20 flex items-center px-8 border-b border-slate-100">
           <h2 className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-2">
-            <Icon size={24} className="text-indigo-600" /> {title}
+            <Icon size={24} className="text-indigo-600" /> {tr(title)}
           </h2>
         </div>
         <div className="flex-1 overflow-y-auto p-6 space-y-8">
           {groups.map((g) => (
             <div key={g}>
-              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">{g}</h3>
+              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">{tr(g)}</h3>
               <ul className="space-y-2">
                 {tabs
                   .filter((t) => (t.group ?? "Views") === g)
@@ -185,7 +195,7 @@ export function ModuleShell<T extends string>({
                               : "text-slate-500 hover:bg-slate-50"
                           }`}
                         >
-                          {TabIcon && <TabIcon size={18} />} {t.label}
+                          {TabIcon && <TabIcon size={18} />} {tr(t.label)}
                         </button>
                       </li>
                     );
@@ -207,13 +217,13 @@ export function ModuleShell<T extends string>({
                 onClick={() => onTab(t.id)}
                 className={`shrink-0 px-4 py-2 rounded-full text-xs font-bold ${activeTab === t.id ? "bg-indigo-600 text-white" : "bg-white text-slate-600 border border-slate-200"}`}
               >
-                {t.label}
+                {tr(t.label)}
               </button>
             ))}
           </div>
         )}
         <header className="flex flex-col md:flex-row md:h-24 md:items-center justify-between gap-3 md:gap-4 px-4 md:px-10 py-4 md:py-0 shrink-0">
-          {onSearch ? <SearchBox value={search ?? ""} onChange={onSearch} placeholder={searchPlaceholder} /> : <div className="hidden md:block" />}
+          {onSearch ? <SearchBox value={search ?? ""} onChange={onSearch} placeholder={tr(searchPlaceholder)} /> : <div className="hidden md:block" />}
           {action}
         </header>
         <div className="px-4 md:px-10 pb-10">{children}</div>
@@ -238,22 +248,24 @@ export function SearchBox({ value, onChange, placeholder }: { value: string; onC
 }
 
 export function ActionButton({ onClick, icon: Icon, children }: { onClick: () => void; icon?: LucideIcon; children: React.ReactNode }) {
+  const t = useT();
   return (
     <button
       onClick={onClick}
       className="flex items-center justify-center gap-2 bg-linear-to-r from-blue-600 to-indigo-600 text-white px-6 py-3.5 rounded-2xl text-sm font-bold shadow-md hover:scale-105 transition-all shrink-0"
     >
-      {Icon && <Icon size={18} />} {children}
+      {Icon && <Icon size={18} />} {tx(t, children)}
     </button>
   );
 }
 
 export function PageHeading({ title, subtitle, children }: { title: string; subtitle?: string; children?: React.ReactNode }) {
+  const t = useT();
   return (
     <div className="flex flex-col md:flex-row justify-between md:items-end mb-6 mt-2 gap-4">
       <div>
-        <h1 className="text-2xl md:text-3xl font-black text-slate-800 mb-2">{title}</h1>
-        {subtitle && <p className="text-slate-500 font-medium">{subtitle}</p>}
+        <h1 className="text-2xl md:text-3xl font-black text-slate-800 mb-2">{t(title)}</h1>
+        {subtitle && <p className="text-slate-500 font-medium">{t(subtitle)}</p>}
       </div>
       {children}
     </div>
@@ -261,11 +273,12 @@ export function PageHeading({ title, subtitle, children }: { title: string; subt
 }
 
 export function Card({ title, action, children, className = "" }: { title?: string; action?: React.ReactNode; children: React.ReactNode; className?: string }) {
+  const t = useT();
   return (
     <div className={`bg-white rounded-3xl md:rounded-4xl p-4 md:p-8 shadow-sm border border-slate-100 ${className}`}>
       {(title || action) && (
         <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
-          {title && <h3 className="text-lg md:text-xl font-bold text-slate-800">{title}</h3>}
+          {title && <h3 className="text-lg md:text-xl font-bold text-slate-800">{t(title)}</h3>}
           {action}
         </div>
       )}
@@ -285,13 +298,14 @@ const STAT_COLORS = {
 } as const;
 
 export function StatCard({ label, value, icon: Icon, color = "indigo" }: { label: string; value: React.ReactNode; icon: LucideIcon; color?: keyof typeof STAT_COLORS }) {
+  const t = useT();
   return (
     <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 flex items-center gap-4">
       <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${STAT_COLORS[color]}`}>
         <Icon size={28} />
       </div>
       <div className="min-w-0">
-        <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">{label}</p>
+        <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">{t(label)}</p>
         <h3 className="text-2xl font-black text-slate-800 truncate">{value}</h3>
       </div>
     </div>
@@ -299,23 +313,26 @@ export function StatCard({ label, value, icon: Icon, color = "indigo" }: { label
 }
 
 export function Empty({ children }: { children: React.ReactNode }) {
-  return <div className="p-12 text-center text-slate-400 border border-slate-200 border-dashed rounded-3xl">{children}</div>;
+  const t = useT();
+  return <div className="p-12 text-center text-slate-400 border border-slate-200 border-dashed rounded-3xl">{tx(t, children)}</div>;
 }
 
 export function Loading({ label = "Syncing with cloud..." }: { label?: string }) {
+  const t = useT();
   return (
     <div className="flex items-center gap-3 text-slate-500 py-8">
-      <Loader2 className="animate-spin" /> {label}
+      <Loader2 className="animate-spin" /> {t(label)}
     </div>
   );
 }
 
 export function AccessDenied({ message }: { message: string }) {
+  const t = useT();
   return (
     <div className="flex-1 bg-[#F4F7FE] flex flex-col items-center justify-center h-full w-full">
       <ShieldAlert size={64} className="text-pink-500 mb-4" />
-      <h1 className="text-2xl font-black text-slate-800">Access Restricted</h1>
-      <p className="text-slate-500">{message}</p>
+      <h1 className="text-2xl font-black text-slate-800">{t("Access Restricted")}</h1>
+      <p className="text-slate-500">{t(message)}</p>
     </div>
   );
 }
@@ -330,14 +347,16 @@ const BADGE_COLORS: Record<string, string> = {
 };
 
 export function Badge({ color = "slate", children }: { color?: keyof typeof BADGE_COLORS | string; children: React.ReactNode }) {
+  const t = useT();
   return (
     <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-bold uppercase tracking-wider ${BADGE_COLORS[color] ?? BADGE_COLORS.slate}`}>
-      {children}
+      {tx(t, children)}
     </span>
   );
 }
 
 export function Table({ headers, children, empty, colSpan }: { headers: string[]; children: React.ReactNode; empty?: string | false; colSpan?: number }) {
+  const t = useT();
   return (
     <div className="overflow-x-auto rounded-2xl border border-slate-100">
       <table className="w-full text-left text-sm min-w-max md:min-w-0">
@@ -345,7 +364,7 @@ export function Table({ headers, children, empty, colSpan }: { headers: string[]
           <tr>
             {headers.map((h, i) => (
               <th key={h + i} className={`px-6 py-4 font-bold ${i === headers.length - 1 && h === "Actions" ? "text-right" : ""}`}>
-                {h}
+                {t(h)}
               </th>
             ))}
           </tr>
@@ -354,7 +373,7 @@ export function Table({ headers, children, empty, colSpan }: { headers: string[]
           {empty ? (
             <tr>
               <td colSpan={colSpan ?? headers.length} className="px-6 py-10 text-center text-slate-400 font-medium">
-                {empty}
+                {t(empty)}
               </td>
             </tr>
           ) : (

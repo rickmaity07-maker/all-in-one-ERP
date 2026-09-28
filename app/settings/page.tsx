@@ -8,10 +8,14 @@ import { getAppVersion, useUpdater } from "@/lib/updater";
 import { Card, Field, SubmitButton, inputClass, toast } from "@/components/ui";
 import { errorMessage, isAndroidApp } from "@/lib/utils";
 import PrivateInfo from "@/components/PrivateInfo";
+import LanguagePicker from "@/components/LanguagePicker";
+import TextPreferences from "@/components/TextPreferences";
+import { useT } from "@/lib/i18n";
 
 export default function SettingsPage() {
   const { profile, user, refresh } = useSession();
   const { status, check, install } = useUpdater();
+  const t = useT();
   const [version, setVersion] = useState("");
   const [name, setName] = useState(profile?.full_name ?? "");
   const [password, setPassword] = useState("");
@@ -54,25 +58,25 @@ export default function SettingsPage() {
     <main className="flex-1 bg-[#F4F7FE] overflow-y-auto">
       <div className="px-4 md:px-10 py-6 md:py-10 space-y-8 max-w-4xl">
         <div>
-          <h1 className="text-2xl md:text-3xl font-black text-slate-800 mb-2 flex items-center gap-3"><Settings size={28} className="text-indigo-600" /> Settings</h1>
-          <p className="text-slate-500 font-medium">Manage your account and keep the app up to date.</p>
+          <h1 className="text-2xl md:text-3xl font-black text-slate-800 mb-2 flex items-center gap-3"><Settings size={28} className="text-indigo-600" /> {t("Settings")}</h1>
+          <p className="text-slate-500 font-medium">{t("Manage your account and keep the app up to date.")}</p>
         </div>
 
         {profile?.must_change_password && (
           <div className="p-5 rounded-3xl bg-orange-50 border border-orange-200 text-orange-800 font-semibold flex items-center gap-3">
             <Lock size={20} className="shrink-0" />
-            You signed in with a temporary password. Choose your own password below to continue using the app.
+            {t("You signed in with a temporary password. Choose your own password below to continue using the app.")}
           </div>
         )}
 
         <Card title="App Updates">
           <div className="flex items-center justify-between gap-6">
             <div>
-              <p className="text-sm text-slate-500 font-medium">Installed version</p>
+              <p className="text-sm text-slate-500 font-medium">{t("Installed version")}</p>
               <p className="text-2xl font-black text-slate-800">{version || "…"}</p>
               <div className="mt-2 text-sm font-semibold">
-                {status.state === "checking" && <span className="text-slate-500 flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Checking for updates…</span>}
-                {status.state === "none" && <span className="text-emerald-600 flex items-center gap-2"><CheckCircle2 size={14} /> You are on the latest version.</span>}
+                {status.state === "checking" && <span className="text-slate-500 flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> {t("Checking for updates…")}</span>}
+                {status.state === "none" && <span className="text-emerald-600 flex items-center gap-2"><CheckCircle2 size={14} /> {t("You are on the latest version.")}</span>}
                 {status.state === "available" && <span className="text-indigo-600">Version {status.version} is ready to install.</span>}
                 {status.state === "downloading" && <span className="text-indigo-600">Downloading… {status.percent}%</span>}
                 {status.state === "installing" && <span className="text-indigo-600">Installing — the app will restart.</span>}
@@ -95,7 +99,7 @@ export default function SettingsPage() {
                   disabled={status.state === "checking" || status.state === "downloading" || status.state === "installing"}
                   className="flex items-center gap-2 bg-slate-900 text-white px-6 py-3 rounded-xl text-sm font-bold shadow-md hover:bg-slate-800 disabled:opacity-60"
                 >
-                  <RefreshCw size={16} /> Check for updates
+                  <RefreshCw size={16} /> {t("Check for updates")}
                 </button>
               )}
             </div>
@@ -127,6 +131,13 @@ export default function SettingsPage() {
             </form>
           </Card>
         </div>
+
+        <Card title="Language">
+          <p className="text-sm text-slate-500 mb-4">{t("Choose the language the app is shown in. It follows your account to your other devices.")}</p>
+          <LanguagePicker variant="buttons" />
+        </Card>
+
+        {user && <TextPreferences userId={user.id} />}
 
         {user && <PrivateInfo userId={user.id} />}
       </div>

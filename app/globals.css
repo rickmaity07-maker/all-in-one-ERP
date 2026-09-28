@@ -11,3 +11,7 @@
 html[data-update-notice] main {
   padding-bottom: 7rem;
 }
+
+.font-app {
+  font-family: var(--font-latin), var(--font-devanagari), var(--font-bengali), system-ui, sans-serif;
+}

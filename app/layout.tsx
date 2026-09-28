@@ -1,13 +1,17 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Noto_Sans_Devanagari, Noto_Sans_Bengali } from "next/font/google";
 import "./globals.css";
 import GlobalSidebar from "../components/GlobalSidebar";
 import UpdateBanner from "../components/UpdateBanner";
 import ConnectionBanner from "../components/ConnectionBanner";
 import { Toaster } from "../components/ui";
 import { AuthGuard, SessionProvider } from "../lib/session";
+import { LanguageProvider } from "../lib/i18n";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ["latin"], variable: "--font-latin" });
+// Hindi and Bengali text falls back to these (Inter has no Devanagari or Bengali letters).
+const devanagari = Noto_Sans_Devanagari({ subsets: ["devanagari"], variable: "--font-devanagari" });
+const bengali = Noto_Sans_Bengali({ subsets: ["bengali"], variable: "--font-bengali" });
 
 export const metadata: Metadata = {
   title: "All-In-One ERP",
@@ -21,8 +25,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.className} h-screen flex flex-col overflow-hidden bg-[#F4F7FE]`}>
+      <body className={`${inter.variable} ${devanagari.variable} ${bengali.variable} font-app h-screen flex flex-col overflow-hidden bg-[#F4F7FE]`}>
         <SessionProvider>
+          <LanguageProvider>
           {/* CUSTOM NATIVE TITLEBAR */}
           <div
             data-tauri-drag-region
@@ -43,6 +48,7 @@ export default function RootLayout({
           </div>
 
           <Toaster />
+          </LanguageProvider>
         </SessionProvider>
       </body>
     </html>

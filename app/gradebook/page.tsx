@@ -4,7 +4,8 @@ import { useState } from "react";
 import { BookMarked, Plus, Printer, Trash2, Download, GraduationCap } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useSession, isAdmin, isStaff } from "@/lib/session";
-import { useTable } from "@/lib/useTable";
+import { useTable, SAVED_OFFLINE } from "@/lib/useTable";
+import { isNetworkError, online, writeOrQueue } from "@/lib/offline";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Loading, Empty, Badge, inputClass, toast, confirmAction } from "@/components/ui";
 import { downloadCsv, errorMessage, escapeHtml, fmtDate, printDocument, type Row } from "@/lib/utils";
 
@@ -72,10 +73,21 @@ export default function Gradebook() {
       toast(`Score must be between 0 and ${assessment.max_points}.`, "error");
       return;
     }
+    const row = { assessment_id: assessment.id, student_id: studentId, score: value };
+    if (!online()) {
+      await writeOrQueue({ table: "grades", kind: "upsert", values: [row], onConflict: "assessment_id,student_id", label: `Score for ${assessment.title}` });
+      grades.setRows((prev) => [...prev.filter((g) => !(g.assessment_id === assessment.id && g.student_id === studentId)), { ...row, id: `${assessment.id}-${studentId}`, _pending: true }]);
+      return toast(SAVED_OFFLINE);
+    }
     const { data, error } = await supabase
       .from("grades")
-      .upsert([{ assessment_id: assessment.id, student_id: studentId, score: value }], { onConflict: "assessment_id,student_id" })
+      .upsert([row], { onConflict: "assessment_id,student_id" })
       .select();
+    if (error && isNetworkError(error)) {
+      await writeOrQueue({ table: "grades", kind: "upsert", values: [row], onConflict: "assessment_id,student_id", label: `Score for ${assessment.title}` });
+      grades.setRows((prev) => [...prev.filter((g) => !(g.assessment_id === assessment.id && g.student_id === studentId)), { ...row, id: `${assessment.id}-${studentId}`, _pending: true }]);
+      return toast(SAVED_OFFLINE);
+    }
     if (error) return toast(errorMessage(error), "error");
     grades.setRows((prev) => [...prev.filter((g) => !(g.assessment_id === assessment.id && g.student_id === studentId)), ...(data ?? [])]);
   };
