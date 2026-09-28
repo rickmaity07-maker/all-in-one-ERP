@@ -338,7 +338,7 @@ export function MyAccount({ studentIds, names }: { studentIds: string[]; names: 
     <div className="space-y-6">
       {paying && (
         <PayOnline studentId={paying.student_id} studentName={names[paying.student_id] ?? ""} balance={Number(paying.balance)}
-          onPaid={reloadAll} onClose={() => setPaying(null)} />
+          onPaid={reloadAll} onClose={() => { setPaying(null); void reloadAll(); }} />
       )}
       {accounts.map((acct) => {
         const entries = ledger.filter((e) => e.account_id === acct.account_id);

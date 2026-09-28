@@ -19,12 +19,12 @@ export default function ServicesStatus() {
   const [payments, setPayments] = useState<string>("");
 
   useEffect(() => {
-    // The assistant's status check says whether it has its AI key, without using the AI.
-    supabase.functions.invoke("assistant", { method: "GET" }).then(({ data, error }) => {
-      if (error) return setAi("not_deployed");
-      setAi((data as { configured?: boolean })?.configured ? "ready" : "not_configured");
-    });
-    supabase.from("app_settings").select("key, value").in("key", ["messaging_enabled", "payments_mode"]).then(({ data }) => {
+    supabase.from("app_settings").select("key, value").in("key", ["messaging_enabled", "payments_mode", "assistant_enabled"]).then(({ data }) => {
+      // The assistant function is only contacted once it has been deployed and switched on.
+      if ((data ?? []).find((r) => r.key === "assistant_enabled")?.value !== true) setAi("not_deployed");
+      else
+        supabase.functions.invoke("assistant", { method: "GET" }).then(({ data: st, error }) =>
+          setAi(error ? "not_deployed" : (st as { configured?: boolean })?.configured ? "ready" : "not_configured"));
       setMessaging((data ?? []).find((r) => r.key === "messaging_enabled")?.value === true);
       setPayments(String((data ?? []).find((r) => r.key === "payments_mode")?.value ?? "off"));
     });
@@ -47,7 +47,7 @@ export default function ServicesStatus() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="p-4 rounded-2xl border border-slate-100 space-y-2">
           <p className="font-bold text-slate-800 flex items-center gap-2"><Sparkles size={16} className="text-amber-500" /> {t("AI assistant")}</p>
-          {status(ai === "checking" ? null : ai === "ready", "Ready", ai === "not_deployed" ? "Not deployed" : "Needs an AI key")}
+          {status(ai === "checking" ? null : ai === "ready", "Ready", ai === "not_deployed" ? "Not set up" : "Needs an AI key")}
           <p className="text-xs text-slate-500">{t("Answers questions from each user's own records (Claude). Deploy the assistant function and add ANTHROPIC_API_KEY as a function secret.")}</p>
         </div>
         <div className="p-4 rounded-2xl border border-slate-100 space-y-2">

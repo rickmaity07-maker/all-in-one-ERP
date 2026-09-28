@@ -19,6 +19,7 @@ const LABELLED = {
   admissions: "applicant_name", leave_requests: "reason", registrar_records: "student_name", chat_messages: "message",
   reservations: "title", assets: "name", badges: "name", fee_schedules: "name", lti_tools: "name", webhook_endpoints: "url",
   purchase_orders: "vendor", grants: "title", campaigns: "name", institutional_documents: "title", devices: "name", access_cards: "card_uid",
+  notifications: "title", message_outbox: "body",
 };
 
 let total = 0;
@@ -56,7 +57,7 @@ for (const pattern of ["Hello from the teacher*", "handout-*", "*📎 handout*"]
 for (const u of testUsers) {
   for (const [table, col] of [["alumni_donations", "alumni_id"], ["purchase_orders", "requester_id"], ["effort_certifications", "person_id"],
     ["labor_distributions", "faculty_id"], ["sabbaticals", "faculty_id"], ["faculty_dossiers", "faculty_id"], ["access_cards", "user_id"], ["aid_awards", "student_id"], ["badge_awards", "student_id"], ["exam_candidates", "student_id"], ["user_metadata", "user_id"],
-    ["student_risk_scores", "student_id"], ["reservations", "user_id"], ["notifications", "user_id"], ["guardian_links", "guardian_id"], ["guardian_links", "student_id"], ["class_enrollments", "student_id"],
+    ["student_risk_scores", "student_id"], ["message_outbox", "user_id"], ["checkin_failures", "student_id"], ["transport_subscriptions", "rider_id"], ["reservations", "user_id"], ["notifications", "user_id"], ["guardian_links", "guardian_id"], ["guardian_links", "student_id"], ["class_enrollments", "student_id"],
     ["attendance", "student_id"], ["grades", "student_id"], ["assignment_submissions", "student_id"], ["leave_requests", "requester_id"],
     ["housing_assignments", "resident_id"], ["meal_accounts", "profile_id"], ["password_reset_requests", "profile_id"], ["profiles", "id"]]) {
     await api(`/rest/v1/${table}?${col}=eq.${u.id}`, { method: "DELETE" });

@@ -389,7 +389,7 @@ export const hi: Record<string, string> = {
   "SMS & WhatsApp": "SMS और WhatsApp",
   "Online fee payments": "ऑनलाइन फ़ीस भुगतान",
   "Ready": "तैयार",
-  "Not deployed": "डिप्लॉय नहीं",
+  "Not set up": "सेट नहीं",
   "Needs an AI key": "AI कुंजी चाहिए",
   "Switched on": "चालू",
   "Not connected": "जुड़ा नहीं",

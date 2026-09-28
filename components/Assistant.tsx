@@ -73,10 +73,19 @@ function AssistantPanel({ onClose }: { onClose: () => void }) {
   // null while checking; false = the assistant isn't deployed or has no AI key yet.
   const [ready, setReady] = useState<boolean | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  // Resolves once we know whether the assistant is available (a question asked earlier waits for it).
+  const readiness = useRef<Promise<boolean> | null>(null);
 
   useEffect(() => {
     if (!navigator.onLine) return;
-    supabase.functions.invoke("assistant", { method: "GET" }).then(({ data, error }) => setReady(!error && !!(data as { configured?: boolean })?.configured));
+    // Only contact the assistant function once an administrator has deployed it and switched it on.
+    readiness.current = (async () => {
+      const { data: s } = await supabase.from("app_settings").select("value").eq("key", "assistant_enabled").maybeSingle();
+      if (s?.value !== true) return false;
+      const { data, error } = await supabase.functions.invoke("assistant", { method: "GET" });
+      return !error && !!(data as { configured?: boolean })?.configured;
+    })();
+    void readiness.current.then(setReady);
   }, []);
 
   useEffect(() => {
@@ -99,7 +108,8 @@ function AssistantPanel({ onClose }: { onClose: () => void }) {
       setMessages([...next, { role: "assistant", content: t("The assistant needs an internet connection."), error: "offline" }]);
       return;
     }
-    if (ready === false) {
+    const available = ready ?? (await readiness.current?.catch(() => false)) ?? false;
+    if (!available) {
       setMessages([...next, { role: "assistant", content: t("The AI assistant isn't set up yet. An administrator needs to add the AI key (see Integrations & API)."), error: "not_configured" }]);
       return;
     }

@@ -47,13 +47,14 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       if (event !== "SIGNED_IN" && event !== "INITIAL_SESSION") return;
       const uid = session?.user.id;
       if (!uid) return;
-      void supabase.from("user_metadata").select("preferences").eq("user_id", uid).maybeSingle().then(({ data: row }) => {
+      // Not inside the auth callback itself: a Supabase call made there can deadlock the sign-in.
+      setTimeout(() => void supabase.from("user_metadata").select("preferences").eq("user_id", uid).maybeSingle().then(({ data: row }) => {
         const saved = (row?.preferences as { language?: string } | undefined)?.language;
         if (saved && LANGUAGES.some((l) => l.code === saved)) {
           setLangState(saved as Lang);
           try { localStorage.setItem(KEY, saved); } catch {}
         }
-      });
+      }), 0);
     });
     return () => data.subscription.unsubscribe();
   }, []);

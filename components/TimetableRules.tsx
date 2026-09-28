@@ -17,6 +17,21 @@ const minutes = (s: string, e: string) => {
 };
 const meetsOn = (c: Row, day: string) => String(c.days ?? "").split(",").map((d) => d.trim()).includes(day);
 
+// Everyone free for the class, least busy that day first (pre-selected).
+function CoverPicker({ free, onAssign, label }: { free: (Row & { load: number })[]; onAssign: (s: Row) => void; label: string }) {
+  const t = useT();
+  const [pick, setPick] = useState(free[0]?.id ?? "");
+  const chosen = free.find((s) => s.id === pick) ?? free[0];
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <select aria-label={label} value={chosen?.id} onChange={(e) => setPick(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-sm">
+        {free.map((s) => <option key={s.id} value={s.id} title={t("{h} h teaching that day", { h: Math.round((s.load / 60) * 10) / 10 })}>{s.full_name}</option>)}
+      </select>
+      <button onClick={() => chosen && onAssign(chosen)} className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-bold">{t("Assign")}</button>
+    </span>
+  );
+}
+
 // Teachers record when they can't teach (used by the auto-scheduler); administrators record an
 // absence and get the free, least-loaded colleagues suggested as cover for each affected class.
 export default function TimetableRules({ classes, staff }: { classes: Row[]; staff: Row[] }) {
@@ -176,12 +191,7 @@ export default function TimetableRules({ classes, staff }: { classes: Row[]; sta
                                 ) : free.length === 0 ? (
                                   <Badge color="orange">{t("nobody free")}</Badge>
                                 ) : (
-                                  free.slice(0, 3).map((s) => (
-                                    <button key={s.id} onClick={() => covers.insert({ class_id: c.id, cover_date: a.absent_on, substitute_id: s.id, absence_id: a.id }, `${s.full_name} will cover ${c.name}.`)}
-                                      className="px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-bold hover:bg-indigo-100" title={t("{h} h teaching that day", { h: Math.round(s.load / 60 * 10) / 10 })}>
-                                      {t("Assign")} {s.full_name}
-                                    </button>
-                                  ))
+                                  <CoverPicker free={free} onAssign={(s) => covers.insert({ class_id: c.id, cover_date: a.absent_on, substitute_id: s.id, absence_id: a.id }, `${s.full_name} will cover ${c.name}.`)} label={`Cover for ${c.name}`} />
                                 )}
                               </li>
                             );

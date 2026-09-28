@@ -55,8 +55,31 @@ const durableStorage: SupportedStorage = {
   },
 };
 
+// A request that stalls (a dropped mobile connection, a stuck network stream) must not leave the app
+// waiting forever: reads give up after 15 s and are retried once, other requests fail after 30 s with a
+// network error the app already explains. Uploads and the AI assistant may legitimately take longer.
+async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+  if (/\/storage\/v1\/object|\/functions\/v1\//.test(url) || init?.signal) return fetch(input, init);
+  const read = method === 'GET' || method === 'HEAD';
+  for (let attempt = 0; ; attempt++) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), read ? 15_000 : 30_000);
+    try {
+      return await fetch(input, { ...init, signal: ctl.signal });
+    } catch (e) {
+      if (ctl.signal.aborted && read && attempt === 0) continue;
+      if (ctl.signal.aborted) throw new TypeError('Failed to fetch (the server took too long to answer)');
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder.supabase.co',
   supabaseAnonKey || 'placeholder-anon-key',
-  { auth: { storage: typeof window !== 'undefined' ? durableStorage : undefined } },
+  { auth: { storage: typeof window !== 'undefined' ? durableStorage : undefined }, global: { fetch: fetchWithTimeout } },
 );

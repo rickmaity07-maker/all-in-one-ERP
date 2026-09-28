@@ -389,7 +389,7 @@ export const bn: Record<string, string> = {
   "SMS & WhatsApp": "SMS ও WhatsApp",
   "Online fee payments": "অনলাইন ফি পেমেন্ট",
   "Ready": "প্রস্তুত",
-  "Not deployed": "ডিপ্লয় হয়নি",
+  "Not set up": "চালু হয়নি",
   "Needs an AI key": "AI কী দরকার",
   "Switched on": "চালু",
   "Not connected": "যুক্ত নয়",

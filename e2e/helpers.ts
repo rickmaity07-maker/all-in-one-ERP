@@ -266,13 +266,23 @@ export async function login(page: Page, user: TestUser | string, password?: stri
   await page.goto("/");
   await page.getByPlaceholder("Email Address").fill(u.email);
   await page.getByPlaceholder("Password").fill(u.password);
+  // Whether the sign-in request reached Supabase and what it answered (explains a stuck sign-in).
+  let auth = "sign-in request not sent";
+  const started = Date.now();
+  const onRequest = (r: { url(): string }) => { if (r.url().includes("/auth/v1/token")) auth = "sign-in request sent, no answer"; };
+  const onResponse = (r: { url(): string; status(): number }) => { if (r.url().includes("/auth/v1/token")) auth = `sign-in answered ${r.status()} after ${Date.now() - started} ms`; };
+  page.on("request", onRequest);
+  page.on("response", onResponse);
   await page.getByRole("button", { name: /Connect to Database/ }).click();
   // The app may show the dashboard for a moment before redirecting to Settings, so wait for a final screen.
   const greeting = page.getByRole("heading", { name: /Good (morning|afternoon|evening)/ });
   const mustChange = page.getByText(/signed in with a temporary password/i);
   await expect(greeting.or(mustChange), "signed in").toBeVisible({ timeout: onAndroid ? 45_000 : undefined }).catch(async (e) => {
     throw new Error(`${e.message}
-On screen: ${await screenMessages(page)}`);
+On screen: ${await screenMessages(page)}; ${auth}`);
+  }).finally(() => {
+    page.off("request", onRequest);
+    page.off("response", onResponse);
   });
   if (await mustChange.isVisible()) {
     const next = `${u.password}9`;

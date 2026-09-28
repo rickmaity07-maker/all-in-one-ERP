@@ -2988,7 +2988,8 @@ create table if not exists public.app_settings (
 );
 insert into public.app_settings (key, value) values
   ('payments_mode', '"mock"'::jsonb),     -- 'mock' (simulated checkout) or 'off'
-  ('messaging_enabled', 'false'::jsonb)   -- true once the send-messages function has Twilio keys
+  ('messaging_enabled', 'false'::jsonb),  -- true once the send-messages function has Twilio keys
+  ('assistant_enabled', 'false'::jsonb)   -- true once the assistant function is deployed with an AI key
 on conflict (key) do nothing;
 -- Private settings: readable only by the database itself (no API access at all).
 create table if not exists public.private_settings (

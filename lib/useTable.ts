@@ -47,9 +47,10 @@ export function useTable(table: string, { orderBy = "created_at", ascending = fa
     return { rows: (result.data ?? []) as Row[], cachedAt: null };
   }, [table, orderBy, ascending, eqKey, cacheKey]);
 
+  // Refreshes in place: the rows on screen stay until the new ones arrive (no loading flash that
+  // would reset what the page is showing, e.g. a confirmation message).
   const reload = useCallback(async () => {
     if (!enabled) return;
-    setLoading(true);
     const r = await fetchRows();
     setRows(r.rows);
     setOfflineSince(r.cachedAt);
