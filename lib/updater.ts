@@ -36,6 +36,11 @@ const setStatus = (s: UpdateStatus) => {
   status = s;
   listeners.forEach((l) => l(s));
 };
+// A check that finishes after a download has started must not replace the download's progress or instructions.
+const busyInstalling = () => status.state === "apk-opened" || status.state === "downloading" || status.state === "installing";
+const setCheckResult = (s: UpdateStatus) => {
+  if (!busyInstalling()) setStatus(s);
+};
 
 // Android may close the app while the browser downloads the new APK; remember for a while that the
 // download was started, so the "open the downloaded file" instructions are still there afterwards.
@@ -80,18 +85,18 @@ export async function checkForUpdate(manual = false): Promise<UpdateStatus> {
         latest = stored?.Ok ?? null;
       }
       apkUrl = latest?.apk_url && newer(latest.version, await getAppVersion()) ? latest.apk_url : null;
-      setStatus(apkUrl && latest ? { state: "available", version: latest.version, notes: latest.notes ?? undefined } : { state: "none" });
+      setCheckResult(apkUrl && latest ? { state: "available", version: latest.version, notes: latest.notes ?? undefined } : { state: "none" });
     } catch (e) {
-      setStatus({ state: "error", message: e instanceof Error ? e.message : String(e) });
+      setCheckResult({ state: "error", message: e instanceof Error ? e.message : String(e) });
     }
     return status;
   }
   try {
     const { check } = await import("@tauri-apps/plugin-updater");
     pending = await check();
-    setStatus(pending ? { state: "available", version: pending.version, notes: pending.body ?? undefined } : { state: "none" });
+    setCheckResult(pending ? { state: "available", version: pending.version, notes: pending.body ?? undefined } : { state: "none" });
   } catch (e) {
-    setStatus({ state: "error", message: e instanceof Error ? e.message : String(e) });
+    setCheckResult({ state: "error", message: e instanceof Error ? e.message : String(e) });
   }
   return status;
 }

@@ -178,6 +178,8 @@ ${[
   ["All", "A request that never got an answer left the screen waiting forever", "Reads time out after 15 s and are retried; other requests report a connection problem"],
   ["All", "A declined card payment did not appear in the account's payment list", "The list refreshes whenever the checkout closes"],
   ["All", "A question asked the moment the assistant opened was sent to the (not yet set up) AI service", "Questions wait for the assistant's status"],
+  ["Android", "A page reopened without signal stayed blank for up to 30 s while the phone tried to reach the server", "The profile and data saved on the phone are shown at once; fresh data follows when the connection is back"],
+  ["All", "An update check finishing after the download had started replaced the download instructions", "Checks leave a started download alone"],
 ].map(([w, p, f]) => `<tr><td>${w}</td><td>${p}</td><td>${f}</td></tr>`).join("")}
 </tbody></table></section>
 <section class="page"><h2>Features</h2><div class="cols">${FEATURES.map(([g, items]) => `<div><h3>${esc(g)}</h3><ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>`).join("")}</div></section>

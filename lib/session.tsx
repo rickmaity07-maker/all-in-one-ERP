@@ -71,6 +71,17 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     if (retry.current) clearTimeout(retry.current);
+    // Known to be offline: use the profile saved on this device at once (a request would only hang until
+    // it times out, leaving the screen empty), and load it again when the connection is back.
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      const cached = cachedProfile(u.id);
+      if (cached) {
+        setProfile({ ...cached, email: u.email });
+        setUnreachable(false);
+        window.addEventListener("online", () => { if (wanted.current === u.id) void load(u); }, { once: true });
+        return;
+      }
+    }
     const { data, error } = await supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", u.id).maybeSingle();
     if (wanted.current !== u.id) return;
     if (error) {
