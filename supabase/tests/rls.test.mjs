@@ -751,6 +751,184 @@ check("user clears the flag after changing password", !r.error && r.rows.length 
   check("disabled devices are cut off", /Unknown or disabled device/.test((await as(null, `select public.device_webhook($1, 'heartbeat', '{}')`, [door.api_key])).error ?? ""));
 }
 
+// --- Section 12: timetable rules & cover, check-in, live bus, interventions, payments, texts, signed credentials ---
+{
+  const q1 = async (sql, params = []) => (await db.query(sql, params)).rows;
+  const sub = "00000000-0000-0000-0000-000000000097", mum = "00000000-0000-0000-0000-000000000098", other = "00000000-0000-0000-0000-000000000096";
+  for (const [id, name, role] of [[sub, "sub", "teacher"], [mum, "mum", "parent"], [other, "other", "teacher"]]) {
+    await db.query(`insert into auth.users (id, email, raw_user_meta_data) values ($1, $2, $3)`, [id, `${name}@test.local`, { full_name: name }]);
+    await db.query(`update public.profiles set active = true, pending = false, role = $2 where id = $1`, [id, role]);
+  }
+  await q1(`insert into public.guardian_links (guardian_id, student_id, relationship) values ($1, $2, 'Mother') on conflict do nothing`, [mum, ids.alice]);
+  const wd = (await q1(`select to_char(current_date, 'Dy') d`))[0].d;
+  const [c1] = await q1(`insert into public.classes (name, teacher_id, days, start_time, end_time) values ('Physics 12', $1, $2, '06:00', '06:45') returning id`, [ids.teacher, wd]);
+  await q1(`insert into public.classes (name, teacher_id, days, start_time, end_time) values ('Chem 12', $1, $2, '06:15', '07:00')`, [other, wd]);
+  await q1(`insert into public.class_enrollments (class_id, student_id, student_name) values ($1, $2, 'alice')`, [c1.id, ids.alice]);
+
+  // Settings
+  check("members read public settings", (await count(ids.alice, `select * from public.app_settings`)) >= 2);
+  check("only the owner changes settings", (await as(ids.admin, `update public.app_settings set value = '"off"' where key = 'payments_mode' returning key`)).rows.length === 0);
+  let r = await as(ids.admin, `select * from public.private_settings`);
+  check("private settings are not readable through the API", !!r.error || r.rows.length === 0, r.error ?? "");
+
+  // Timetable rules and cover
+  r = await as(ids.teacher, `insert into public.teacher_unavailability (teacher_id, day, start_time, end_time, reason) values ($1, 'Mon', '08:00', '12:00', 'School run') returning id`, [ids.teacher]);
+  check("teachers record when they are unavailable", !r.error, r.error ?? "");
+  r = await as(ids.teacher, `insert into public.teacher_unavailability (teacher_id, day) values ($1, 'Tue')`, [other]);
+  check("teachers cannot block another teacher's time", !!r.error, r.error ?? "accepted!");
+  check("students cannot see staff availability", (await count(ids.alice, `select * from public.teacher_unavailability`)) === 0);
+  r = await as(ids.teacher, `insert into public.cover_assignments (class_id, cover_date, substitute_id) values ($1, current_date, $2)`, [c1.id, sub]);
+  check("only administrators assign cover", !!r.error, r.error ?? "accepted!");
+  r = await as(ids.admin, `insert into public.cover_assignments (class_id, cover_date, substitute_id) values ($1, current_date, $2)`, [c1.id, other]);
+  check("cover is refused when the substitute is teaching then", /not free: teaching Chem 12/.test(r.error ?? ""), r.error ?? "accepted!");
+  await as(ids.admin, `insert into public.teacher_absences (teacher_id, absent_on, reason) values ($1, current_date, 'Ill')`, [sub]);
+  r = await as(ids.admin, `insert into public.cover_assignments (class_id, cover_date, substitute_id) values ($1, current_date, $2)`, [c1.id, sub]);
+  check("cover is refused when the substitute is absent", /absent that day/.test(r.error ?? ""), r.error ?? "accepted!");
+  await q1(`delete from public.teacher_absences where teacher_id = $1`, [sub]);
+  r = await as(ids.admin, `insert into public.cover_assignments (class_id, cover_date, substitute_id) values ($1, current_date, $2) returning id`, [c1.id, sub]);
+  check("administrators assign a free teacher as cover", !r.error, r.error ?? "");
+  check("the substitute is told", (await count(sub, `select * from public.notifications where title = 'Cover: Physics 12'`)) === 1);
+  check("the class's students are told", (await count(ids.alice, `select * from public.notifications where title = 'Cover teacher for Physics 12'`)) === 1);
+  r = await as(sub, `insert into public.attendance (class_id, student_id, session_date, status) values ($1, $2, current_date, 'Absent') returning id`, [c1.id, ids.alice]);
+  check("the cover teacher takes the register that day", !r.error, r.error ?? "");
+  r = await as(other, `insert into public.attendance (class_id, student_id, session_date, status) values ($1, $2, current_date + 1, 'Present') returning id`, [c1.id, ids.alice]);
+  check("other teachers still cannot", !!r.error || r.rows.length === 0, r.error ?? "");
+  await q1(`delete from public.attendance where class_id = $1`, [c1.id]);
+
+  // QR / code check-in
+  r = await as(ids.alice, `select public.open_checkin($1)`, [c1.id]);
+  check("students cannot open check-in", !!r.error, r.error ?? "accepted!");
+  const sessionId = (await as(ids.teacher, `select public.open_checkin($1, 15, 0) as id`, [c1.id])).rows[0]?.id;
+  check("the teacher opens check-in", !!sessionId);
+  r = await as(ids.alice, `select secret from public.checkin_sessions`);
+  check("nobody can read the check-in secret", !!r.error, r.error ?? "readable!");
+  check("students cannot get the live code", !!(await as(ids.alice, `select public.current_checkin_code($1)`, [sessionId])).error);
+  const live = (await as(ids.teacher, `select public.current_checkin_code($1) as c`, [sessionId])).rows[0]?.c;
+  check("the teacher sees a 6-digit code and QR text", /^\d{6}$/.test(live?.code ?? "") && live.qr.startsWith("ERP-CHECKIN:"), JSON.stringify(live));
+  r = await as(ids.bob, `select public.checkin($1) as res`, [live.code]);
+  check("a student not in the class cannot check in with the code", r.rows[0]?.res?.ok === false, r.error ?? JSON.stringify(r.rows));
+  r = await as(ids.alice, `select public.checkin('000000') as res`);
+  check("a wrong code is refused", /not valid/.test(r.rows[0]?.res?.error ?? ""), r.error ?? JSON.stringify(r.rows));
+  r = await as(ids.alice, `select public.checkin($1) as res`, [live.qr]);
+  check("the right code (scanned QR) marks the student present", r.rows[0]?.res?.status === "Present", r.error ?? JSON.stringify(r.rows));
+  for (let i = 0; i < 5; i++) await as(ids.bob, `select public.checkin('111111')`);
+  r = await as(ids.bob, `select public.checkin('111111')`);
+  check("guessing codes is locked out after 5 tries", /Too many wrong codes/.test(r.error ?? ""), r.error ?? "");
+
+  // Card tap
+  await q1(`insert into public.access_cards (card_uid, user_id) values ('04A1B2C3', $1) on conflict do nothing`, [ids.alice]);
+  r = await as(ids.teacher, `select public.mark_attendance_by_card($1, current_date + 1, '04:a1:b2:c3') as res`, [c1.id]);
+  check("tapping a student's card marks them present", r.rows[0]?.res?.status === "Present", r.error ?? "");
+  r = await as(ids.teacher, `select public.mark_attendance_by_card($1, current_date, 'FFFFFF')`, [c1.id]);
+  check("unknown cards are refused", /Unknown or blocked card/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.alice, `select public.mark_attendance_by_card($1, current_date, '04A1B2C3')`, [c1.id]);
+  check("students cannot take the register by card", !!r.error, r.error ?? "accepted!");
+
+  // Live bus
+  const [route] = await q1(`insert into public.transport_routes (name, driver_id) values ('Route 12', $1) returning id`, [sub]);
+  const [stop] = await q1(`insert into public.transport_stops (route_id, seq, name, lat, lng) values ($1, 1, 'Park Street', 22.5530, 88.3520) returning id`, [route.id]);
+  await as(ids.alice, `insert into public.transport_subscriptions (route_id, rider_id) values ($1, $2)`, [route.id, ids.alice]);
+  r = await as(ids.alice, `update public.transport_subscriptions set stop_id = $1 where route_id = $2 returning id`, [stop.id, route.id]);
+  check("riders choose their stop", r.rows.length === 1, r.error ?? "");
+  r = await as(ids.alice, `select public.report_bus_location($1, 22.6, 88.4)`, [route.id]);
+  check("only the driver shares the bus position", !!r.error, r.error ?? "accepted!");
+  r = await as(sub, `select public.report_bus_location($1, 22.70, 88.50, 30) as res`, [route.id]);
+  check("far away: no alert yet", r.rows[0]?.res?.alerts === 0, r.error ?? JSON.stringify(r.rows));
+  r = await as(sub, `select public.report_bus_location($1, 22.5600, 88.3560, 25) as res`, [route.id]);
+  check("about 5 minutes away: rider and parent are alerted", r.rows[0]?.res?.alerts === 1
+    && (await count(ids.alice, `select * from public.notifications where title = 'Bus arriving soon'`)) === 1
+    && (await count(mum, `select * from public.notifications where title = 'Bus arriving soon'`)) === 1, r.error ?? JSON.stringify(r.rows));
+  await as(sub, `select public.report_bus_location($1, 22.5540, 88.3525, 20)`, [route.id]);
+  check("the alert is sent once per trip", (await count(ids.alice, `select * from public.notifications where title = 'Bus arriving soon'`)) === 1);
+  check("members see where the bus is", (await count(ids.alice, `select * from public.bus_locations`)) === 1);
+  r = await as(ids.alice, `insert into public.bus_locations (route_id, lat, lng) values ($1, 0, 0)`, [route.id]);
+  check("nobody can fake the bus position directly", !!r.error, r.error ?? "accepted!");
+
+  // Interventions
+  r = await as(ids.alice, `insert into public.interventions (student_id, reason) values ($1, 'x')`, [ids.alice]);
+  check("students cannot open interventions", !!r.error, r.error ?? "accepted!");
+  r = await as(ids.teacher, `insert into public.interventions (student_id, mentor_id, reason, goal) values ($1, $2, 'Attendance dropping', '90% attendance') returning id`, [ids.alice, sub]);
+  const caseId = r.rows[0]?.id;
+  check("a teacher opens an intervention with a mentor", !!caseId, r.error ?? "");
+  check("the mentor is told", (await count(sub, `select * from public.notifications where title like 'You are mentoring%'`)) === 1);
+  r = await as(ids.teacher, `insert into public.interventions (student_id, reason) values ($1, 'Again')`, [ids.alice]);
+  check("one open intervention per student", /already has an open/.test(r.error ?? ""), r.error ?? "accepted!");
+  check("the student cannot read the case", (await count(ids.alice, `select * from public.interventions`)) === 0);
+  check("unrelated teachers cannot read the case", (await count(other, `select * from public.interventions`)) === 0);
+  check("the mentor reads the case", (await count(sub, `select * from public.interventions`)) === 1);
+  r = await as(sub, `insert into public.intervention_actions (intervention_id, kind, note, owner_id, due_on) values ($1, 'call', 'Call home', $2, current_date + 3) returning id`, [caseId, ids.teacher]);
+  check("the mentor plans a follow-up and its owner is told", !r.error && (await count(ids.teacher, `select * from public.notifications where title like 'Follow-up due%'`)) === 1, r.error ?? "");
+  r = await as(other, `insert into public.intervention_actions (intervention_id, note) values ($1, 'x')`, [caseId]);
+  check("unrelated staff cannot add to the case", !!r.error, r.error ?? "accepted!");
+  r = await as(sub, `select public.intervention_impact($1) as i`, [caseId]);
+  check("impact compares before and after", !!r.rows[0]?.i && "attendance_before" in r.rows[0].i && "risk_now" in r.rows[0].i, r.error ?? "");
+  check("students cannot read impact", !!(await as(ids.alice, `select public.intervention_impact($1)`, [caseId])).error);
+  r = await as(sub, `update public.interventions set status = 'closed' where id = $1`, [caseId]);
+  check("closing requires an outcome", /outcome/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(sub, `update public.interventions set status = 'closed', outcome = 'improved' where id = $1 returning closed_at`, [caseId]);
+  check("the mentor closes the case with its outcome", !!r.rows[0]?.closed_at, r.error ?? "");
+
+  // Online payments (test gateway)
+  await q1(`select public.post_entry(public.ensure_account($1), null, 'charge', 500, 'Lab fee', 'manual')`, [ids.alice]);
+  const bal = async () => Number((await q1(`select public.balance_of($1) b`, [ids.alice]))[0].b);
+  const before = await bal();
+  r = await as(ids.bob, `select public.create_payment_intent($1, 10, 'upi')`, [ids.alice]);
+  check("you cannot pay someone else's fees", !!r.error, r.error ?? "accepted!");
+  r = await as(ids.alice, `select public.create_payment_intent($1, $2, 'upi')`, [ids.alice, before + 1]);
+  check("you cannot pay more than is due", /at most/.test(r.error ?? ""), r.error ?? "accepted!");
+  check("students cannot read balances of others", !!(await as(ids.alice, `select public.balance_of($1)`, [ids.bob])).error);
+  const intent = (await as(ids.alice, `select public.create_payment_intent($1, 100, 'upi') as p`, [ids.alice])).rows[0]?.p;
+  check("the student starts a payment", !!intent?.id && intent.mode === "mock", JSON.stringify(intent));
+  r = await as(ids.bob, `select public.mock_gateway_complete($1, true)`, [intent.id]);
+  check("only the payer can complete it", !!r.error, r.error ?? "accepted!");
+  r = await as(ids.alice, `update public.payment_intents set status = 'succeeded' where id = $1 returning id`, [intent.id]);
+  check("payments cannot be marked paid directly", r.rows.length === 0, r.error ?? "");
+  r = await as(ids.alice, `select public.mock_gateway_complete($1, true, 'alice@upi') as res`, [intent.id]);
+  check("a successful payment is posted to the ledger", r.rows[0]?.res?.ok === true && (await bal()) === before - 100, r.error ?? JSON.stringify(r.rows));
+  check("the parent and student get a receipt", (await count(ids.alice, `select * from public.notifications where title = 'Payment received'`)) === 1
+    && (await count(mum, `select * from public.notifications where title = 'Payment received'`)) === 1);
+  check("a payment cannot be completed twice", !!(await as(ids.alice, `select public.mock_gateway_complete($1, true)`, [intent.id])).error);
+  const declined = (await as(mum, `select public.create_payment_intent($1, 50, 'card') as p`, [ids.alice])).rows[0]?.p;
+  r = await as(mum, `select public.mock_gateway_complete($1, false, 'Card declined') as res`, [declined?.id]);
+  check("a parent can pay; a declined card charges nothing", !!declined?.id && r.rows[0]?.res?.ok === false && (await bal()) === before - 100, r.error ?? "");
+  check("payers see their own payments only", (await count(ids.bob, `select * from public.payment_intents`)) === 0 && (await count(mum, `select * from public.payment_intents`)) === 2);
+  await as(ids.owner, `update public.app_settings set value = '"off"' where key = 'payments_mode'`);
+  check("the owner can switch online payments off", /switched off/.test((await as(ids.alice, `select public.create_payment_intent($1, 10, 'upi')`, [ids.alice])).error ?? ""));
+  await as(ids.owner, `update public.app_settings set value = '"mock"' where key = 'payments_mode'`);
+
+  // SMS / WhatsApp
+  r = await as(ids.alice, `insert into public.contact_preferences (user_id, phone, sms, whatsapp) values ($1, '12345', true, true)`, [ids.alice]);
+  check("phone numbers must be in international format", !!r.error, r.error ?? "accepted!");
+  r = await as(ids.alice, `insert into public.contact_preferences (user_id, phone, sms, whatsapp) values ($1, '+919812345678', true, true) returning user_id`, [ids.alice]);
+  check("users opt in to SMS and WhatsApp", !r.error, r.error ?? "");
+  check("others cannot read your number", (await count(ids.bob, `select * from public.contact_preferences`)) === 0);
+  await q1(`select public.notify_user($1, 'Test text', 'Hello', '/')`, [ids.alice]);
+  const texts = (await as(ids.alice, `select channel, status from public.message_outbox order by channel`)).rows;
+  check("notifications become texts (marked not configured until Twilio is set up)", texts.length === 2 && texts.every((t) => t.status === "not_configured"), JSON.stringify(texts));
+  check("others cannot read your texts", (await count(ids.bob, `select * from public.message_outbox`)) === 0);
+  await as(ids.owner, `update public.app_settings set value = 'true' where key = 'messaging_enabled'`);
+  await q1(`select public.notify_user($1, 'Queued text', 'Hi', '/')`, [ids.alice]);
+  check("once messaging is on, texts are queued for sending", (await count(ids.alice, `select * from public.message_outbox where status = 'queued'`)) === 2);
+  r = await as(ids.alice, `select public.broadcast_message('parents', 'Trip', 'Friday')`);
+  check("students cannot broadcast", !!r.error, r.error ?? "accepted!");
+  r = await as(ids.admin, `select public.broadcast_message('parents', 'School trip', 'Bring lunch on Friday') as n`);
+  check("administrators message all parents", r.rows[0]?.n >= 1 && (await count(mum, `select * from public.notifications where title = 'School trip'`)) === 1, r.error ?? "");
+
+  // Signed credentials
+  check("students cannot read issuer keys", (await count(ids.alice, `select * from public.issuer_keys`)) === 0);
+  r = await as(ids.admin, `insert into public.issuer_keys (public_jwk, private_jwk) values ('{"kty":"EC","crv":"P-256","x":"a","y":"b"}', '{"kty":"EC","crv":"P-256","x":"a","y":"b","d":"secret"}') returning id`);
+  check("administrators create the signing key", !r.error, r.error ?? "");
+  r = await as(null, `select public.issuer_public_key() as k`);
+  check("anyone gets the public key, never the private part", r.rows[0]?.k?.x === "a" && !("d" in (r.rows[0]?.k ?? {})), r.error ?? JSON.stringify(r.rows));
+  const [bdg] = await q1(`insert into public.badges (name) values ('Signed Badge') returning id`);
+  const [award] = await q1(`insert into public.badge_awards (badge_id, student_id) values ($1, $2) returning id, verification_code`, [bdg.id, ids.alice]);
+  r = await as(ids.teacher, `update public.badge_awards set credential_jwt = 'forged' where id = $1`, [award.id]);
+  check("teachers cannot sign credentials", /Only administrators/.test(r.error ?? ""), r.error ?? "accepted!");
+  await as(ids.admin, `update public.badge_awards set credential_jwt = 'header.payload.sig' where id = $1`, [award.id]);
+  r = await as(null, `select public.verify_credential($1) as v`, [award.verification_code]);
+  check("public verification returns the signed credential and key", r.rows[0]?.v?.credential_jwt === "header.payload.sig" && r.rows[0]?.v?.public_jwk?.x === "a", r.error ?? "");
+}
+
 // --- Deactivated account ---
 await db.exec(`update public.profiles set active = false where id = '${ids.eve}'`);
 check("deactivated user sees no general chat", (await count(ids.eve, `select * from public.chat_messages where channel = 'general'`)) === 0);

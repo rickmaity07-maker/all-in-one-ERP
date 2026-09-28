@@ -2971,4 +2971,743 @@ begin
   end if;
 end $$;
 
+-- =====================================================================
+-- 12. NEXT-LEVEL FEATURES
+--     Timetable rules and absence cover, tap-card and QR attendance, live school bus,
+--     interventions (from risk warning to measured result), online fee payments (simulated
+--     gateway), SMS/WhatsApp delivery (Twilio, through the send-messages function) and
+--     digitally signed credentials (Open Badges 3.0, VC-JWT).
+-- =====================================================================
+
+-- ---------- Settings ----------
+-- Public, non-secret switches (payments mode, messaging on/off). Secrets never live here.
+create table if not exists public.app_settings (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);
+insert into public.app_settings (key, value) values
+  ('payments_mode', '"mock"'::jsonb),     -- 'mock' (simulated checkout) or 'off'
+  ('messaging_enabled', 'false'::jsonb)   -- true once the send-messages function has Twilio keys
+on conflict (key) do nothing;
+-- Private settings: readable only by the database itself (no API access at all).
+create table if not exists public.private_settings (
+  key text primary key,
+  value text not null
+);
+insert into public.private_settings (key, value) values
+  ('functions_url', ''),                  -- e.g. https://<project>.supabase.co/functions/v1
+  ('functions_secret', encode(sha256(convert_to(gen_random_uuid()::text || clock_timestamp()::text, 'UTF8')), 'hex'))
+on conflict (key) do nothing;
+revoke all on public.private_settings from anon, authenticated;
+
+create or replace function public.setting(p_key text) returns jsonb
+language sql stable security definer set search_path = public as $$ select value from public.app_settings where key = p_key $$;
+
+-- ---------- Timetable rules and absence cover ----------
+create table if not exists public.teacher_unavailability (
+  id uuid primary key default gen_random_uuid(),
+  teacher_id uuid not null references public.profiles(id) on delete cascade,
+  day text not null check (day in ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')),
+  start_time text not null default '00:00' check (start_time ~ '^[0-2][0-9]:[0-5][0-9]$'),
+  end_time text not null default '23:59' check (end_time ~ '^[0-2][0-9]:[0-5][0-9]$'),
+  reason text,
+  created_at timestamptz not null default now(),
+  check (end_time > start_time)
+);
+alter table public.classes add column if not exists room_type text;
+alter table public.classes drop constraint if exists classes_room_type_check;
+alter table public.classes add constraint classes_room_type_check check (room_type is null or room_type in ('classroom', 'lecture_hall', 'lab'));
+
+create table if not exists public.teacher_absences (
+  id uuid primary key default gen_random_uuid(),
+  teacher_id uuid not null references public.profiles(id) on delete cascade,
+  absent_on date not null,
+  reason text,
+  created_by uuid default auth.uid(),
+  created_at timestamptz not null default now(),
+  unique (teacher_id, absent_on)
+);
+create table if not exists public.cover_assignments (
+  id uuid primary key default gen_random_uuid(),
+  class_id uuid not null references public.classes(id) on delete cascade,
+  cover_date date not null,
+  substitute_id uuid not null references public.profiles(id) on delete cascade,
+  absence_id uuid references public.teacher_absences(id) on delete cascade,
+  created_by uuid default auth.uid(),
+  created_at timestamptz not null default now(),
+  unique (class_id, cover_date)
+);
+
+-- True when the teacher already has something at that time on that date (own class, cover, absence, unavailability).
+create or replace function public.teacher_busy(p_teacher uuid, p_date date, p_start text, p_end text, p_ignore_class uuid default null) returns text
+language plpgsql stable security definer set search_path = public as $$
+declare wd text := to_char(p_date, 'Dy'); hit text;
+begin
+  if auth.uid() is not null and not public.is_staff() then raise exception 'Staff only.'; end if;
+  if exists (select 1 from public.teacher_absences where teacher_id = p_teacher and absent_on = p_date) then return 'absent that day'; end if;
+  select 'unavailable (' || coalesce(reason, 'blocked time') || ')' into hit from public.teacher_unavailability
+    where teacher_id = p_teacher and day = wd and start_time < p_end and p_start < end_time limit 1;
+  if hit is not null then return hit; end if;
+  select 'teaching ' || name into hit from public.classes
+    where teacher_id = p_teacher and id is distinct from p_ignore_class and days is not null
+      and wd = any(string_to_array(replace(days, ' ', ''), ',')) and start_time < p_end and p_start < end_time limit 1;
+  if hit is not null then return hit; end if;
+  select 'covering ' || c.name into hit from public.cover_assignments ca join public.classes c on c.id = ca.class_id
+    where ca.substitute_id = p_teacher and ca.cover_date = p_date and c.id is distinct from p_ignore_class
+      and c.start_time < p_end and p_start < c.end_time limit 1;
+  return hit;
+end $$;
+
+create or replace function public.check_cover() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare cls record; why text;
+begin
+  select * into cls from public.classes where id = new.class_id;
+  if coalesce((select role from public.profiles where id = new.substitute_id), 'none') not in ('teacher', 'administration', 'owner') then
+    raise exception 'Cover must be given by a member of staff.';
+  end if;
+  if new.substitute_id = cls.teacher_id then raise exception 'The substitute is the class''s own teacher.'; end if;
+  why := public.teacher_busy(new.substitute_id, new.cover_date, cls.start_time, cls.end_time, new.class_id);
+  if why is not null then raise exception 'That teacher is not free: %.', why; end if;
+  return new;
+end $$;
+drop trigger if exists cover_check on public.cover_assignments;
+create trigger cover_check before insert or update on public.cover_assignments for each row execute function public.check_cover();
+
+create or replace function public.on_cover_assigned() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare cls record; sub text;
+begin
+  select * into cls from public.classes where id = new.class_id;
+  select full_name into sub from public.profiles where id = new.substitute_id;
+  perform public.notify_user(new.substitute_id, 'Cover: ' || cls.name,
+    format('You are covering %s on %s, %s–%s%s.', cls.name, to_char(new.cover_date, 'Dy DD Mon'), cls.start_time, cls.end_time,
+           coalesce(' in ' || cls.room, '')), '/classes');
+  insert into public.notifications (user_id, title, body, link)
+  select e.student_id, 'Cover teacher for ' || cls.name,
+         format('%s will teach %s on %s.', sub, cls.name, to_char(new.cover_date, 'Dy DD Mon')), '/classes'
+  from public.class_enrollments e where e.class_id = new.class_id and e.status = 'enrolled';
+  return new;
+end $$;
+drop trigger if exists cover_notify on public.cover_assignments;
+create trigger cover_notify after insert on public.cover_assignments for each row execute function public.on_cover_assigned();
+
+-- A cover teacher may take the register and grade for the class on the day they cover it.
+create or replace function public.teaches(p_class uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_admin() or (public.app_role() = 'teacher'
+    and (exists (select 1 from public.classes where id = p_class and teacher_id = auth.uid())
+         or exists (select 1 from public.cover_assignments where class_id = p_class and substitute_id = auth.uid() and cover_date = current_date)))
+$$;
+
+-- ---------- Tap-card and QR check-in attendance ----------
+create table if not exists public.checkin_sessions (
+  id uuid primary key default gen_random_uuid(),
+  class_id uuid not null references public.classes(id) on delete cascade,
+  session_date date not null default current_date,
+  secret text not null default encode(sha256(convert_to(gen_random_uuid()::text || clock_timestamp()::text, 'UTF8')), 'hex'),
+  opened_by uuid default auth.uid(),
+  opened_at timestamptz not null default now(),
+  late_after timestamptz,
+  expires_at timestamptz not null default now() + interval '15 minutes',
+  closed_at timestamptz
+);
+create table if not exists public.checkin_failures (
+  student_id uuid not null,
+  at timestamptz not null default now()
+);
+create index if not exists checkin_failures_student on public.checkin_failures (student_id, at);
+
+-- 6-digit code that changes every 20 seconds, derived from the session's secret.
+create or replace function public.checkin_code(p_secret text, p_window bigint) returns text
+language sql immutable as $$
+  select lpad(((('x' || substr(encode(sha256(convert_to(p_secret || ':' || p_window, 'UTF8')), 'hex'), 1, 15))::bit(60)::bigint) % 1000000)::text, 6, '0')
+$$;
+revoke execute on function public.checkin_code(text, bigint) from public, anon, authenticated;
+create or replace function public.checkin_window() returns bigint
+language sql stable as $$ select floor(extract(epoch from clock_timestamp()) / 20)::bigint $$;
+
+create or replace function public.open_checkin(p_class uuid, p_minutes int default 15, p_late_after int default 5) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare sid uuid;
+begin
+  if not public.teaches(p_class) then raise exception 'Only the class''s teacher can open check-in.'; end if;
+  if p_minutes not between 1 and 120 then raise exception 'Check-in can stay open 1–120 minutes.'; end if;
+  update public.checkin_sessions set closed_at = now() where class_id = p_class and closed_at is null;
+  insert into public.checkin_sessions (class_id, expires_at, late_after)
+  values (p_class, now() + make_interval(mins => p_minutes), case when p_late_after > 0 then now() + make_interval(mins => p_late_after) end)
+  returning id into sid;
+  return sid;
+end $$;
+
+create or replace function public.close_checkin(p_session uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.teaches((select class_id from public.checkin_sessions where id = p_session)) then raise exception 'Not your class.'; end if;
+  update public.checkin_sessions set closed_at = now() where id = p_session and closed_at is null;
+end $$;
+
+create or replace function public.current_checkin_code(p_session uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare s record; w bigint := public.checkin_window();
+begin
+  select * into s from public.checkin_sessions where id = p_session;
+  if s.id is null or not public.teaches(s.class_id) then raise exception 'Not your class.'; end if;
+  if s.closed_at is not null or s.expires_at < now() then return jsonb_build_object('open', false); end if;
+  return jsonb_build_object('open', true, 'code', public.checkin_code(s.secret, w),
+    'qr', 'ERP-CHECKIN:' || s.id || ':' || public.checkin_code(s.secret, w),
+    'refresh_in', 20 - (floor(extract(epoch from clock_timestamp()))::bigint % 20),
+    'expires_at', s.expires_at,
+    'checked_in', (select count(*) from public.attendance a where a.class_id = s.class_id and a.session_date = s.session_date and a.status in ('Present', 'Late')));
+end $$;
+
+-- Marks the register and returns what happened. Used by both check-in methods.
+create or replace function public.mark_present(p_class uuid, p_student uuid, p_date date, p_late boolean, p_by uuid, p_note text) returns text
+language plpgsql security definer set search_path = public as $$
+declare st text := case when p_late then 'Late' else 'Present' end; nm text;
+begin
+  select full_name into nm from public.profiles where id = p_student;
+  insert into public.attendance (class_id, student_id, student_name, session_date, status, note, marked_by)
+  values (p_class, p_student, nm, p_date, st, p_note, p_by)
+  on conflict (class_id, student_id, session_date) do update
+    set status = case when public.attendance.status in ('Present', 'Late', 'Excused') then public.attendance.status else excluded.status end,
+        note = coalesce(public.attendance.note, excluded.note), marked_by = excluded.marked_by;
+  return (select status from public.attendance where class_id = p_class and student_id = p_student and session_date = p_date);
+end $$;
+revoke execute on function public.mark_present(uuid, uuid, date, boolean, uuid, text) from public, anon, authenticated;
+
+create or replace function public.checkin(p_code text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare code text; sess uuid; s record; w bigint := public.checkin_window(); st text; fails int;
+begin
+  if auth.uid() is null then raise exception 'Sign in first.'; end if;
+  select count(*) into fails from public.checkin_failures where student_id = auth.uid() and at > now() - interval '10 minutes';
+  if fails >= 5 then raise exception 'Too many wrong codes. Ask your teacher to mark you present.'; end if;
+  code := upper(trim(coalesce(p_code, '')));
+  if code like 'ERP-CHECKIN:%' then
+    sess := nullif(split_part(code, ':', 2), '')::uuid;
+    code := split_part(code, ':', 3);
+  end if;
+  for s in
+    select cs.* from public.checkin_sessions cs
+    where cs.closed_at is null and cs.expires_at > now() and (sess is null or cs.id = sess)
+      and exists (select 1 from public.class_enrollments e where e.class_id = cs.class_id and e.student_id = auth.uid() and e.status = 'enrolled')
+  loop
+    if code in (public.checkin_code(s.secret, w), public.checkin_code(s.secret, w - 1)) then
+      st := public.mark_present(s.class_id, auth.uid(), s.session_date, s.late_after is not null and now() > s.late_after, s.opened_by, 'Checked in with code');
+      return jsonb_build_object('ok', true, 'status', st, 'class', (select name from public.classes where id = s.class_id));
+    end if;
+  end loop;
+  -- Not an exception: the failed attempt must be kept so repeated guessing gets locked out.
+  insert into public.checkin_failures (student_id) values (auth.uid());
+  return jsonb_build_object('ok', false, 'error', 'That code is not valid for any of your classes right now.');
+end $$;
+
+create or replace function public.mark_attendance_by_card(p_class uuid, p_date date, p_card text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare holder uuid; st text; nm text;
+begin
+  if not public.teaches(p_class) then raise exception 'Only the class''s teacher can take the register.'; end if;
+  select user_id into holder from public.access_cards where card_uid = upper(regexp_replace(coalesce(p_card, ''), '[^0-9A-Za-z]', '', 'g')) and active;
+  if holder is null then raise exception 'Unknown or blocked card.'; end if;
+  select full_name into nm from public.profiles where id = holder;
+  if not exists (select 1 from public.class_enrollments where class_id = p_class and student_id = holder and status = 'enrolled') then
+    raise exception '% is not enrolled in this class.', nm;
+  end if;
+  st := public.mark_present(p_class, holder, coalesce(p_date, current_date), false, auth.uid(), 'Card tap');
+  return jsonb_build_object('ok', true, 'student_id', holder, 'name', nm, 'status', st);
+end $$;
+
+-- ---------- Live school bus ----------
+alter table public.transport_routes add column if not exists driver_id uuid references public.profiles(id) on delete set null;
+create table if not exists public.transport_stops (
+  id uuid primary key default gen_random_uuid(),
+  route_id uuid not null references public.transport_routes(id) on delete cascade,
+  seq int not null check (seq > 0),
+  name text not null,
+  lat double precision not null check (lat between -90 and 90),
+  lng double precision not null check (lng between -180 and 180),
+  unique (route_id, seq)
+);
+alter table public.transport_subscriptions add column if not exists stop_id uuid references public.transport_stops(id) on delete set null;
+create table if not exists public.bus_locations (
+  route_id uuid primary key references public.transport_routes(id) on delete cascade,
+  lat double precision not null,
+  lng double precision not null,
+  speed_kmh numeric,
+  trip_active boolean not null default true,
+  driver_id uuid,
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.bus_stop_alerts (
+  route_id uuid not null references public.transport_routes(id) on delete cascade,
+  stop_id uuid not null references public.transport_stops(id) on delete cascade,
+  trip_date date not null,
+  primary key (route_id, stop_id, trip_date)
+);
+
+create or replace function public.distance_km(lat1 double precision, lng1 double precision, lat2 double precision, lng2 double precision) returns double precision
+language sql immutable as $$
+  select 2 * 6371 * asin(sqrt(power(sin(radians(lat2 - lat1) / 2), 2) + cos(radians(lat1)) * cos(radians(lat2)) * power(sin(radians(lng2 - lng1) / 2), 2)))
+$$;
+
+-- Called by the driver's phone every few seconds. Riders (and their parents) are told once per trip
+-- when the bus is about 5 minutes from their stop.
+create or replace function public.report_bus_location(p_route uuid, p_lat double precision, p_lng double precision, p_speed numeric default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare r record; st record; km double precision; eta numeric; speed numeric; sent int := 0;
+begin
+  select * into r from public.transport_routes where id = p_route;
+  if r.id is null then raise exception 'Unknown route.'; end if;
+  if not (public.is_admin() or r.driver_id = auth.uid()) then raise exception 'Only this route''s driver can share its location.'; end if;
+  if p_lat not between -90 and 90 or p_lng not between -180 and 180 then raise exception 'Invalid position.'; end if;
+  insert into public.bus_locations (route_id, lat, lng, speed_kmh, trip_active, driver_id, updated_at)
+  values (p_route, p_lat, p_lng, p_speed, true, auth.uid(), now())
+  on conflict (route_id) do update set lat = excluded.lat, lng = excluded.lng, speed_kmh = excluded.speed_kmh, trip_active = true,
+    driver_id = excluded.driver_id, updated_at = now();
+  -- City buses average about 20 km/h door to door; a moving bus's own speed is used when it is realistic.
+  speed := case when p_speed between 5 and 90 then p_speed else 20 end;
+  for st in select * from public.transport_stops where route_id = p_route loop
+    km := public.distance_km(p_lat, p_lng, st.lat, st.lng);
+    eta := ceil(km / speed * 60);
+    if eta <= 5 and not exists (select 1 from public.bus_stop_alerts where route_id = p_route and stop_id = st.id and trip_date = current_date) then
+      insert into public.bus_stop_alerts (route_id, stop_id, trip_date) values (p_route, st.id, current_date);
+      insert into public.notifications (user_id, title, body, link)
+      select u.id, 'Bus arriving soon', format('%s will reach %s in about %s min.', r.name, st.name, greatest(eta, 1)), '/logistics'
+      from (select s.rider_id as id from public.transport_subscriptions s where s.route_id = p_route and s.stop_id = st.id
+            union select g.guardian_id from public.transport_subscriptions s join public.guardian_links g on g.student_id = s.rider_id
+            where s.route_id = p_route and s.stop_id = st.id) u
+      where u.id is not null;
+      sent := sent + 1;
+    end if;
+  end loop;
+  return jsonb_build_object('ok', true, 'alerts', sent);
+end $$;
+
+create or replace function public.end_bus_trip(p_route uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not (public.is_admin() or (select driver_id from public.transport_routes where id = p_route) = auth.uid()) then
+    raise exception 'Only this route''s driver can end the trip.';
+  end if;
+  update public.bus_locations set trip_active = false, updated_at = now() where route_id = p_route;
+  delete from public.bus_stop_alerts where route_id = p_route and trip_date = current_date;
+end $$;
+
+-- ---------- Interventions: from risk warning to measured result ----------
+create table if not exists public.interventions (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  mentor_id uuid references public.profiles(id) on delete set null,
+  opened_by uuid default auth.uid(),
+  reason text not null,
+  goal text,
+  status text not null default 'open' check (status in ('open', 'monitoring', 'closed')),
+  risk_at_open int,
+  outcome text check (outcome is null or outcome in ('improved', 'no_change', 'worse', 'withdrawn')),
+  opened_at timestamptz not null default now(),
+  closed_at timestamptz
+);
+create table if not exists public.intervention_actions (
+  id uuid primary key default gen_random_uuid(),
+  intervention_id uuid not null references public.interventions(id) on delete cascade,
+  kind text not null default 'note' check (kind in ('meeting', 'call', 'tutoring', 'plan', 'referral', 'note')),
+  note text not null check (length(trim(note)) > 0),
+  owner_id uuid default auth.uid(),
+  due_on date,
+  done_at timestamptz,
+  created_by uuid default auth.uid(),
+  created_at timestamptz not null default now()
+);
+
+-- Administrators, the mentor, whoever opened the case, and the student's current teachers.
+create or replace function public.intervention_visible(p_student uuid, p_mentor uuid, p_opener uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_admin() or p_mentor = auth.uid() or p_opener = auth.uid()
+    or (public.app_role() = 'teacher' and exists (
+          select 1 from public.class_enrollments e join public.classes c on c.id = e.class_id
+          where e.student_id = p_student and c.teacher_id = auth.uid()))
+$$;
+create or replace function public.can_see_intervention(p_id uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.interventions i where i.id = p_id and public.intervention_visible(i.student_id, i.mentor_id, i.opened_by))
+$$;
+
+create or replace function public.before_intervention() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    if (select role from public.profiles where id = new.student_id) <> 'student' then raise exception 'Interventions are for students.'; end if;
+    if exists (select 1 from public.interventions where student_id = new.student_id and status <> 'closed') then
+      raise exception 'This student already has an open intervention.';
+    end if;
+    new.opened_by := coalesce(auth.uid(), new.opened_by);
+    new.risk_at_open := (select score from public.student_risk_scores where student_id = new.student_id);
+    new.status := 'open'; new.outcome := null; new.closed_at := null;
+  else
+    new.student_id := old.student_id; new.opened_at := old.opened_at; new.risk_at_open := old.risk_at_open; new.opened_by := old.opened_by;
+    if new.status = 'closed' and old.status <> 'closed' then
+      if new.outcome is null then raise exception 'Record the outcome when closing an intervention.'; end if;
+      new.closed_at := now();
+    elsif new.status <> 'closed' then
+      new.closed_at := null;
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists intervention_before on public.interventions;
+create trigger intervention_before before insert or update on public.interventions for each row execute function public.before_intervention();
+
+create or replace function public.after_intervention() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare nm text;
+begin
+  select full_name into nm from public.profiles where id = new.student_id;
+  if new.mentor_id is not null and (tg_op = 'INSERT' or new.mentor_id is distinct from old.mentor_id) then
+    perform public.notify_user(new.mentor_id, 'You are mentoring ' || nm, new.reason, '/interventions');
+  end if;
+  return new;
+end $$;
+drop trigger if exists intervention_after on public.interventions;
+create trigger intervention_after after insert or update on public.interventions for each row execute function public.after_intervention();
+
+create or replace function public.on_intervention_action() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.can_see_intervention(new.intervention_id) then raise exception 'Not your case.'; end if;
+  if new.owner_id is not null and new.owner_id is distinct from auth.uid() and new.due_on is not null then
+    perform public.notify_user(new.owner_id, 'Follow-up due ' || to_char(new.due_on, 'DD Mon'), new.note, '/interventions');
+  end if;
+  return new;
+end $$;
+drop trigger if exists intervention_action_check on public.intervention_actions;
+create trigger intervention_action_check before insert on public.intervention_actions for each row execute function public.on_intervention_action();
+
+-- Before/after comparison: attendance and grades in the 30 days before the case opened vs. since.
+create or replace function public.intervention_impact(p_id uuid) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare i record; ab numeric; aa numeric; gb numeric; ga numeric;
+begin
+  if not public.can_see_intervention(p_id) then raise exception 'Not your case.'; end if;
+  select * into i from public.interventions where id = p_id;
+  select round(100.0 * count(*) filter (where status in ('Present', 'Late')) / nullif(count(*) filter (where status <> 'Excused'), 0))
+    into ab from public.attendance where student_id = i.student_id and session_date >= (i.opened_at::date - 30) and session_date < i.opened_at::date;
+  select round(100.0 * count(*) filter (where status in ('Present', 'Late')) / nullif(count(*) filter (where status <> 'Excused'), 0))
+    into aa from public.attendance where student_id = i.student_id and session_date >= i.opened_at::date and session_date <= coalesce(i.closed_at::date, current_date);
+  select round(100 * sum(g.score / a.max_points * a.weight) / nullif(sum(a.weight), 0)) into gb
+    from public.grades g join public.assessments a on a.id = g.assessment_id
+    where g.student_id = i.student_id and g.score is not null and g.created_at >= i.opened_at - interval '30 days' and g.created_at < i.opened_at;
+  select round(100 * sum(g.score / a.max_points * a.weight) / nullif(sum(a.weight), 0)) into ga
+    from public.grades g join public.assessments a on a.id = g.assessment_id
+    where g.student_id = i.student_id and g.score is not null and g.created_at >= i.opened_at and g.created_at <= coalesce(i.closed_at, now());
+  return jsonb_build_object('attendance_before', ab, 'attendance_after', aa, 'grade_before', gb, 'grade_after', ga,
+    'risk_at_open', i.risk_at_open, 'risk_now', (select score from public.student_risk_scores where student_id = i.student_id),
+    'days_open', (coalesce(i.closed_at, now())::date - i.opened_at::date));
+end $$;
+
+-- ---------- Online fee payments (simulated gateway while payments_mode = 'mock') ----------
+create table if not exists public.payment_intents (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  payer_id uuid default auth.uid(),
+  amount numeric not null check (amount > 0),
+  method text not null check (method in ('upi', 'card', 'netbanking')),
+  status text not null default 'created' check (status in ('created', 'succeeded', 'failed')),
+  gateway text not null default 'mock',
+  gateway_ref text not null unique default 'pay_' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 14),
+  detail text,
+  failure_reason text,
+  ledger_entry_id uuid,
+  created_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+
+create or replace function public.balance_of(p_student uuid) returns numeric
+language sql stable security definer set search_path = public as $$
+  select coalesce(sum(public.entry_sign(l.entry_type, l.debit_account) * l.amount), 0)
+  from public.ledger_entries l join public.student_accounts a on a.id = l.account_id where a.student_id = p_student
+$$;
+
+create or replace function public.create_payment_intent(p_student uuid, p_amount numeric, p_method text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare bal numeric; pi record;
+begin
+  if coalesce(public.setting('payments_mode') #>> '{}', 'off') = 'off' then raise exception 'Online payments are switched off.'; end if;
+  if not (p_student = auth.uid() or public.is_guardian_of(p_student) or public.is_admin()) then
+    raise exception 'You can only pay your own or your child''s fees.';
+  end if;
+  bal := public.balance_of(p_student);
+  if bal <= 0 then raise exception 'There is nothing to pay.'; end if;
+  if p_amount is null or p_amount <= 0 then raise exception 'Enter an amount to pay.'; end if;
+  if round(p_amount, 2) > round(bal, 2) then raise exception 'You can pay at most % (the balance due).', round(bal, 2); end if;
+  insert into public.payment_intents (student_id, amount, method, gateway)
+  values (p_student, round(p_amount, 2), p_method, coalesce(public.setting('payments_mode') #>> '{}', 'mock'))
+  returning * into pi;
+  return jsonb_build_object('id', pi.id, 'gateway_ref', pi.gateway_ref, 'amount', pi.amount, 'mode', pi.gateway);
+end $$;
+
+-- In 'mock' mode the simulated checkout reports the result itself. A real gateway would confirm
+-- through a signed webhook instead, and this function refuses to run outside mock mode.
+create or replace function public.mock_gateway_complete(p_intent uuid, p_success boolean, p_detail text default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare pi record; eid uuid; label text;
+begin
+  if coalesce(public.setting('payments_mode') #>> '{}', 'off') <> 'mock' then raise exception 'The test gateway is not enabled.'; end if;
+  select * into pi from public.payment_intents where id = p_intent for update;
+  if pi.id is null or pi.payer_id is distinct from auth.uid() then raise exception 'Unknown payment.'; end if;
+  if pi.status <> 'created' then raise exception 'This payment was already completed.'; end if;
+  if not p_success then
+    update public.payment_intents set status = 'failed', failure_reason = coalesce(p_detail, 'Declined by the bank'), completed_at = now() where id = p_intent;
+    return jsonb_build_object('ok', false, 'reason', coalesce(p_detail, 'Declined by the bank'));
+  end if;
+  if round(pi.amount, 2) > round(public.balance_of(pi.student_id), 2) then
+    update public.payment_intents set status = 'failed', failure_reason = 'Balance changed; nothing charged', completed_at = now() where id = p_intent;
+    return jsonb_build_object('ok', false, 'reason', 'The balance changed while you were paying. Nothing was charged.');
+  end if;
+  label := case pi.method when 'upi' then 'UPI' when 'card' then 'card' else 'net banking' end;
+  eid := public.post_entry(public.ensure_account(pi.student_id), null, 'payment', pi.amount,
+    'Online payment — ' || label || ' (test mode)', 'gateway', pi.method, pi.gateway_ref);
+  update public.payment_intents set status = 'succeeded', detail = left(p_detail, 60), ledger_entry_id = eid, completed_at = now() where id = p_intent;
+  -- Receipts go to the student and every linked parent, including whoever paid.
+  insert into public.notifications (user_id, title, body, link)
+  select u.id, 'Payment received', format('%s received by %s. Reference %s.', to_char(pi.amount, 'FM999G999G990D00'), label, pi.gateway_ref), u.link
+  from (select pi.student_id as id, '/finance' as link union select guardian_id, '/family' from public.guardian_links where student_id = pi.student_id) u;
+  perform public.emit_event('payment.succeeded', pi.student_id, jsonb_build_object('amount', pi.amount, 'method', pi.method, 'reference', pi.gateway_ref));
+  return jsonb_build_object('ok', true, 'reference', pi.gateway_ref, 'balance', public.balance_of(pi.student_id));
+end $$;
+
+-- ---------- SMS / WhatsApp ----------
+create table if not exists public.contact_preferences (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  phone text check (phone is null or phone ~ '^\+[1-9][0-9]{7,14}$'),
+  sms boolean not null default false,
+  whatsapp boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.message_outbox (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null,
+  notification_id uuid,
+  channel text not null check (channel in ('sms', 'whatsapp')),
+  to_number text not null,
+  body text not null,
+  status text not null default 'queued' check (status in ('queued', 'sent', 'delivered', 'failed', 'not_configured')),
+  provider text,
+  provider_ref text,
+  error text,
+  attempts int not null default 0,
+  created_at timestamptz not null default now(),
+  sent_at timestamptz
+);
+create index if not exists message_outbox_status on public.message_outbox (status, created_at);
+
+-- Every in-app notification is also texted to people who asked for it.
+create or replace function public.queue_text_messages() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare p record; enabled boolean := coalesce((public.setting('messaging_enabled'))::text = 'true', false);
+begin
+  select * into p from public.contact_preferences where user_id = new.user_id and phone is not null;
+  if p.user_id is null or not (p.sms or p.whatsapp) then return new; end if;
+  if p.sms then
+    insert into public.message_outbox (user_id, notification_id, channel, to_number, body, status, error)
+    values (new.user_id, new.id, 'sms', p.phone, left('All-In-One ERP: ' || new.title || coalesce('. ' || new.body, ''), 320),
+            case when enabled then 'queued' else 'not_configured' end,
+            case when enabled then null else 'Text messaging is not set up yet.' end);
+  end if;
+  if p.whatsapp then
+    insert into public.message_outbox (user_id, notification_id, channel, to_number, body, status, error)
+    values (new.user_id, new.id, 'whatsapp', p.phone, left('*' || new.title || '*' || coalesce(E'\n' || new.body, ''), 1000),
+            case when enabled then 'queued' else 'not_configured' end,
+            case when enabled then null else 'Text messaging is not set up yet.' end);
+  end if;
+  return new;
+end $$;
+drop trigger if exists notifications_text on public.notifications;
+create trigger notifications_text after insert on public.notifications for each row execute function public.queue_text_messages();
+
+-- Wakes the send-messages function (Twilio) when something is queued; it also runs every minute as a safety net.
+create or replace function public.kick_message_sender() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare u text := (select value from public.private_settings where key = 'functions_url');
+begin
+  if new.status = 'queued' and coalesce(u, '') <> '' and exists (select 1 from pg_extension where extname = 'pg_net') then
+    begin
+      execute 'select net.http_post(url := $1, body := $2, headers := $3)'
+        using u || '/send-messages', jsonb_build_object('id', new.id),
+              jsonb_build_object('Content-Type', 'application/json', 'X-ERP-Secret', (select value from public.private_settings where key = 'functions_secret'));
+    exception when others then null;
+    end;
+  end if;
+  return new;
+end $$;
+drop trigger if exists outbox_kick on public.message_outbox;
+create trigger outbox_kick after insert on public.message_outbox for each row execute function public.kick_message_sender();
+
+-- Administrators message a whole group at once (in-app, and by text for those who opted in).
+create or replace function public.broadcast_message(p_audience text, p_title text, p_body text) returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  if not public.is_admin() then raise exception 'Administrators only.'; end if;
+  if coalesce(trim(p_title), '') = '' then raise exception 'A title is required.'; end if;
+  insert into public.notifications (user_id, title, body, link)
+  select id, p_title, p_body, '/announcements' from public.profiles
+  where active and not pending and id <> auth.uid() and case p_audience
+    when 'parents' then role = 'parent' when 'students' then role = 'student'
+    when 'staff' then role in ('teacher', 'administration', 'owner') when 'all' then role <> 'alumni' else false end;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+-- ---------- Digitally signed credentials (Open Badges 3.0 as VC-JWT, ES256) ----------
+create table if not exists public.issuer_keys (
+  id text primary key default 'default',
+  public_jwk jsonb not null,
+  private_jwk jsonb not null,
+  created_by uuid default auth.uid(),
+  created_at timestamptz not null default now()
+);
+alter table public.badge_awards add column if not exists credential_jwt text;
+
+create or replace function public.issuer_public_key() returns jsonb
+language sql stable security definer set search_path = public as $$ select public_jwk from public.issuer_keys where id = 'default' $$;
+
+create or replace function public.verify_credential(p_code text) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce((
+    select jsonb_build_object('valid', not a.revoked, 'revoked', a.revoked, 'badge', b.name, 'description', b.description, 'skills', b.skills,
+                              'holder', p.full_name, 'issued_at', a.issued_at, 'issuer', 'All-In-One ERP', 'code', a.verification_code,
+                              'credential_jwt', a.credential_jwt, 'public_jwk', public.issuer_public_key())
+    from public.badge_awards a join public.badges b on b.id = a.badge_id join public.profiles p on p.id = a.student_id
+    where a.verification_code = upper(trim(p_code))), jsonb_build_object('valid', false))
+$$;
+
+-- ---------- Row level security for section 12 ----------
+do $$
+declare p record;
+begin
+  for p in select policyname, tablename from pg_policies where schemaname = 'public' and tablename in (
+    'app_settings','private_settings','teacher_unavailability','teacher_absences','cover_assignments','checkin_sessions','checkin_failures',
+    'transport_stops','bus_locations','bus_stop_alerts','interventions','intervention_actions','payment_intents',
+    'contact_preferences','message_outbox','issuer_keys')
+  loop
+    execute format('drop policy if exists %I on public.%I', p.policyname, p.tablename);
+  end loop;
+end $$;
+drop policy if exists "transport_subscriptions own stop" on public.transport_subscriptions;
+
+alter table public.app_settings enable row level security;
+create policy "settings read" on public.app_settings for select to authenticated using (true);
+create policy "settings owner" on public.app_settings for all to authenticated using (public.app_role() = 'owner') with check (public.app_role() = 'owner');
+alter table public.private_settings enable row level security;
+
+alter table public.teacher_unavailability enable row level security;
+create policy "unavailability staff read" on public.teacher_unavailability for select to authenticated using (public.is_staff());
+create policy "unavailability own" on public.teacher_unavailability for all to authenticated
+  using (teacher_id = auth.uid() or public.is_admin()) with check ((teacher_id = auth.uid() and public.is_staff()) or public.is_admin());
+alter table public.teacher_absences enable row level security;
+create policy "absences staff read" on public.teacher_absences for select to authenticated using (public.is_staff());
+create policy "absences report own" on public.teacher_absences for insert to authenticated with check ((teacher_id = auth.uid() and public.is_staff()) or public.is_admin());
+create policy "absences admin" on public.teacher_absences for all to authenticated using (public.is_admin()) with check (public.is_admin());
+alter table public.cover_assignments enable row level security;
+create policy "cover staff read" on public.cover_assignments for select to authenticated using (public.is_staff());
+create policy "cover student read" on public.cover_assignments for select to authenticated using (public.enrolled(class_id));
+create policy "cover admin" on public.cover_assignments for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+alter table public.checkin_sessions enable row level security;
+create policy "checkin teacher read" on public.checkin_sessions for select to authenticated using (public.teaches(class_id));
+alter table public.checkin_failures enable row level security;
+revoke select on public.checkin_sessions from anon, authenticated;
+grant select (id, class_id, session_date, opened_by, opened_at, late_after, expires_at, closed_at) on public.checkin_sessions to authenticated;
+
+alter table public.transport_stops enable row level security;
+create policy "stops read" on public.transport_stops for select to authenticated using (public.is_member());
+create policy "stops staff" on public.transport_stops for all to authenticated using (public.is_staff()) with check (public.is_staff());
+alter table public.bus_locations enable row level security;
+create policy "bus read" on public.bus_locations for select to authenticated using (public.is_member());
+alter table public.bus_stop_alerts enable row level security;
+create policy "transport_subscriptions own stop" on public.transport_subscriptions for update to authenticated
+  using (rider_id = auth.uid()) with check (rider_id = auth.uid());
+
+alter table public.interventions enable row level security;
+create policy "interventions read" on public.interventions for select to authenticated using (public.intervention_visible(student_id, mentor_id, opened_by));
+create policy "interventions open" on public.interventions for insert to authenticated with check (public.is_staff());
+create policy "interventions update" on public.interventions for update to authenticated
+  using (public.is_admin() or mentor_id = auth.uid() or opened_by = auth.uid())
+  with check (public.is_admin() or mentor_id = auth.uid() or opened_by = auth.uid());
+create policy "interventions admin delete" on public.interventions for delete to authenticated using (public.is_admin());
+alter table public.intervention_actions enable row level security;
+create policy "actions read" on public.intervention_actions for select to authenticated using (public.can_see_intervention(intervention_id));
+create policy "actions add" on public.intervention_actions for insert to authenticated with check (public.is_staff() and public.can_see_intervention(intervention_id));
+create policy "actions complete" on public.intervention_actions for update to authenticated
+  using (public.can_see_intervention(intervention_id)) with check (public.can_see_intervention(intervention_id));
+
+alter table public.payment_intents enable row level security;
+create policy "payments read" on public.payment_intents for select to authenticated
+  using (payer_id = auth.uid() or student_id = auth.uid() or public.is_guardian_of(student_id) or public.is_admin());
+
+alter table public.contact_preferences enable row level security;
+create policy "contact own" on public.contact_preferences for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "contact admin read" on public.contact_preferences for select to authenticated using (public.is_admin());
+alter table public.message_outbox enable row level security;
+create policy "outbox own read" on public.message_outbox for select to authenticated using (user_id = auth.uid() or public.is_admin());
+
+alter table public.issuer_keys enable row level security;
+create policy "issuer keys admin" on public.issuer_keys for all to authenticated using (public.is_admin()) with check (public.is_admin());
+-- Only administrators may put a signature on an award.
+create or replace function public.guard_credential_jwt() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.credential_jwt is distinct from old.credential_jwt and not public.is_admin() and pg_trigger_depth() <= 1 then
+    raise exception 'Only administrators can sign credentials.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists badge_awards_sign_guard on public.badge_awards;
+create trigger badge_awards_sign_guard before update on public.badge_awards for each row execute function public.guard_credential_jwt();
+
+-- Functions: who may call what.
+revoke execute on function public.teacher_busy(uuid, date, text, text, uuid), public.open_checkin(uuid, int, int), public.close_checkin(uuid),
+  public.current_checkin_code(uuid), public.checkin(text), public.mark_attendance_by_card(uuid, date, text),
+  public.report_bus_location(uuid, double precision, double precision, numeric), public.end_bus_trip(uuid),
+  public.intervention_impact(uuid), public.create_payment_intent(uuid, numeric, text), public.mock_gateway_complete(uuid, boolean, text),
+  public.broadcast_message(text, text, text), public.balance_of(uuid), public.can_see_intervention(uuid), public.intervention_visible(uuid, uuid, uuid) from public, anon;
+grant execute on function public.teacher_busy(uuid, date, text, text, uuid), public.open_checkin(uuid, int, int), public.close_checkin(uuid),
+  public.current_checkin_code(uuid), public.checkin(text), public.mark_attendance_by_card(uuid, date, text),
+  public.report_bus_location(uuid, double precision, double precision, numeric), public.end_bus_trip(uuid),
+  public.intervention_impact(uuid), public.create_payment_intent(uuid, numeric, text), public.mock_gateway_complete(uuid, boolean, text),
+  public.broadcast_message(text, text, text), public.can_see_intervention(uuid), public.intervention_visible(uuid, uuid, uuid) to authenticated;
+revoke execute on function public.balance_of(uuid) from authenticated;
+grant execute on function public.issuer_public_key(), public.verify_credential(text) to anon, authenticated;
+
+-- Realtime (live bus position, payment status) and audit trail.
+do $$
+declare t text;
+begin
+  foreach t in array array['bus_locations', 'message_outbox'] loop
+    if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = t) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+  foreach t in array array['app_settings','teacher_unavailability','teacher_absences','cover_assignments','transport_stops',
+    'interventions','intervention_actions','payment_intents','contact_preferences','issuer_keys']
+  loop
+    execute format('drop trigger if exists audit_%s on public.%I', t, t);
+    execute format('create trigger audit_%s after insert or update or delete on public.%I for each row execute function public.write_audit()', t, t);
+  end loop;
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.unschedule(jobid) from cron.job where jobname = 'erp-messages';
+    if exists (select 1 from pg_extension where extname = 'pg_net') then
+      perform cron.schedule('erp-messages', '* * * * *', $job$
+        select net.http_post(url := (select value from public.private_settings where key = 'functions_url') || '/send-messages',
+          body := '{}'::jsonb, headers := jsonb_build_object('Content-Type', 'application/json',
+          'X-ERP-Secret', (select value from public.private_settings where key = 'functions_secret')))
+        where exists (select 1 from public.message_outbox where status = 'queued')
+          and (select value from public.private_settings where key = 'functions_url') <> ''
+      $job$);
+    end if;
+  end if;
+end $$;
+
 notify pgrst, 'reload schema';
