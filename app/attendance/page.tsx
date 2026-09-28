@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { UserCheck, Save, CheckCheck, BarChart3, Loader2, AlertTriangle, Download } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { UserCheck, Save, CheckCheck, BarChart3, Loader2, AlertTriangle, Download, QrCode, Nfc } from "lucide-react";
+import { CheckInCode, CardTap, StudentCheckIn } from "@/components/CheckIn";
 import { useSession, isAdmin, isStaff } from "@/lib/session";
 import { useTable, SAVED_OFFLINE } from "@/lib/useTable";
 import { writeOrQueue } from "@/lib/offline";
@@ -38,9 +38,11 @@ export default function AttendancePage() {
   const [classId, setClassId] = useState("");
   const [date, setDate] = useState(today());
   const [marks, setMarks] = useState<Record<string, { status: string; note: string }>>({});
+  const [checkIn, setCheckIn] = useState<"" | "code" | "cards">("");
   const [saving, setSaving] = useState(false);
 
   const activeClass = classId || myClasses[0]?.id || "";
+  const activeClassRow = classes.rows.find((c) => c.id === activeClass);
   const roster = enrollments.rows.filter((e) => e.class_id === activeClass).sort((a, b) => String(a.student_name).localeCompare(String(b.student_name)));
   const savedForDay = attendance.rows.filter((a) => a.class_id === activeClass && a.session_date === date);
 
@@ -101,6 +103,7 @@ export default function AttendancePage() {
     return (
       <ModuleShell title="Attendance" icon={UserCheck} tabs={[{ id: "register" as TabId, label: "My Attendance", group: "Attendance" }]} activeTab="register" onTab={setActiveTab}>
         <PageHeading title="My Attendance" subtitle="Your attendance rate in each class. Late counts as attended; excused absences are not counted." />
+        {myClasses.length > 0 && <div className="mb-8"><StudentCheckIn onCheckedIn={() => attendance.reload()} /></div>}
         {myClasses.length === 0 ? (
           <Empty>You are not enrolled in any classes.</Empty>
         ) : (
@@ -149,10 +152,14 @@ export default function AttendancePage() {
       ) : activeTab === "register" ? (
         <>
           <PageHeading title="Daily Register" subtitle="Tap a status for each student, then save. You can come back and correct any day.">{classPicker}</PageHeading>
+          {checkIn === "code" && activeClassRow && <CheckInCode cls={activeClassRow} onClose={() => { setCheckIn(""); attendance.reload(); }} />}
+          {checkIn === "cards" && activeClassRow && <CardTap cls={activeClassRow} date={date} onMarked={attendance.reload} onClose={() => { setCheckIn(""); attendance.reload(); }} />}
           <Card
             title={`${roster.length} students • ${Object.keys(marks).length} marked`}
             action={
               <div className="flex flex-wrap gap-2">
+                <button onClick={() => setCheckIn("code")} disabled={!roster.length || date !== today()} title={date !== today() ? "Check-in works for today's lesson" : ""} className="flex items-center gap-2 text-sm font-bold text-indigo-700 bg-indigo-50 px-4 py-2 rounded-xl disabled:opacity-40"><QrCode size={16} /> Check-in code</button>
+                <button onClick={() => setCheckIn("cards")} disabled={!roster.length} className="flex items-center gap-2 text-sm font-bold text-indigo-700 bg-indigo-50 px-4 py-2 rounded-xl disabled:opacity-40"><Nfc size={16} /> Tap cards</button>
                 <button onClick={markAll} disabled={!roster.length} className="flex items-center gap-2 text-sm font-bold text-emerald-600 bg-emerald-50 px-4 py-2 rounded-xl disabled:opacity-40"><CheckCheck size={16} /> Mark all present</button>
                 <button onClick={saveRegister} disabled={saving || !roster.length} className="flex items-center gap-2 text-sm font-bold text-white bg-indigo-600 px-5 py-2 rounded-xl hover:bg-indigo-700 disabled:opacity-40">
                   {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save register

@@ -1,23 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Award, Plus, Copy, Ban, Printer, ShieldCheck, Trash2 } from "lucide-react";
+import { Award, Plus, Copy, Ban, Printer, ShieldCheck, Trash2, FileKey2 } from "lucide-react";
+import QRCode from "qrcode";
+import { signPending, verifyUrl } from "@/lib/credentials";
 import { supabase } from "@/lib/supabase";
 import { useSession, isStaff, isAdmin } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, Card, Table, Loading, Empty, Badge, IconButton, inputClass, confirmAction, toast } from "@/components/ui";
-import { escapeHtml, fmtDate, isTauri, matches, printDocument, type Row } from "@/lib/utils";
+import { downloadBlob, escapeHtml, fmtDate, matches, printDocument, type Row } from "@/lib/utils";
 
 type TabId = "mine" | "awards" | "badges";
 
-// The desktop/phone apps have no public address, so their links point at the hosted web version.
-const PUBLIC_SITE = process.env.NEXT_PUBLIC_SITE_URL ?? "https://rickmaity07-maker.github.io/all-in-one-ERP";
-const verifyUrl = (code: string) => {
-  const base = typeof window === "undefined" || isTauri() ? PUBLIC_SITE : `${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}`;
-  return `${base}/verify?code=${code}`;
-};
-
-function printCertificate(badge: Row, holder: string, award: Row) {
+// The certificate carries a QR code of its verification link: scan it to check it's genuine.
+async function printCertificate(badge: Row, holder: string, award: Row) {
+  const qr = await QRCode.toDataURL(verifyUrl(award.verification_code), { width: 220, margin: 1 });
   printDocument(
     `Credential - ${badge.name}`,
     `<div style="text-align:center;border:6px double #6441A5;padding:48px;border-radius:16px">
@@ -29,6 +26,8 @@ function printCertificate(badge: Row, holder: string, award: Row) {
       ${badge.skills?.length ? `<p><b>Skills:</b> ${badge.skills.map(escapeHtml).join(", ")}</p>` : ""}
       <p class="muted">Issued ${new Date(award.issued_at).toLocaleDateString()} • Verification code <b>${escapeHtml(award.verification_code)}</b></p>
       <p class="muted">Verify at ${escapeHtml(verifyUrl(award.verification_code))}</p>
+      <img src="${qr}" alt="Verification QR code" style="width:120px;height:120px;margin-top:8px" />
+      ${award.credential_jwt ? `<p class="muted">Digitally signed (Open Badges 3.0)</p>` : ""}
     </div>`
   );
 }
@@ -57,6 +56,23 @@ export default function Credentials() {
   }, [staff]);
 
   const badgeOf = (id: string) => badges.rows.find((x) => x.id === id);
+
+  // Administrators' devices sign any credential that isn't signed yet (e.g. issued by a teacher).
+  const unsigned = awards.rows.filter((x) => !x.credential_jwt && !x.revoked).length;
+  const peopleLoaded = Object.keys(people).length > 0;
+  useEffect(() => {
+    if (!admin || !unsigned || !peopleLoaded || badges.loading) return;
+    let off = false;
+    signPending(awards.rows, badges.rows, people)
+      .then((n) => { if (!off && n) void awards.reload(); })
+      .catch((e) => toast(`Could not sign credentials: ${e?.message ?? e}`, "error"));
+    return () => { off = true; };
+  }, [admin, unsigned, peopleLoaded, badges.loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const download = (x: Row) => {
+    const badge = badgeOf(x.badge_id);
+    downloadBlob(`${(badge?.name ?? "credential").replace(/[^\w-]+/g, "-")}-${x.verification_code}.jwt`, x.credential_jwt, "application/vc+jwt");
+  };
 
   const saveBadge = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -157,6 +173,7 @@ export default function Credentials() {
                   <div className="flex gap-2 mt-4">
                     <button onClick={() => copy(x.verification_code)} className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-2 rounded-lg flex items-center gap-1"><Copy size={14} /> Share link</button>
                     <button onClick={() => printCertificate(badge, people[x.student_id] ?? profile?.full_name ?? "", x)} className="text-xs font-bold text-slate-700 bg-slate-100 px-3 py-2 rounded-lg flex items-center gap-1"><Printer size={14} /> Certificate</button>
+                    {x.credential_jwt && <button onClick={() => download(x)} title="Signed Open Badges 3.0 credential for digital wallets" className="text-xs font-bold text-slate-700 bg-slate-100 px-3 py-2 rounded-lg flex items-center gap-1"><FileKey2 size={14} /> Digital</button>}
                   </div>
                 </div>
               );
@@ -172,7 +189,7 @@ export default function Credentials() {
                 <td className="px-6 py-4">{badgeOf(x.badge_id)?.name}</td>
                 <td className="px-6 py-4 text-sm text-slate-500">{fmtDate(x.issued_at)}</td>
                 <td className="px-6 py-4 font-mono text-xs">{x.verification_code}</td>
-                <td className="px-6 py-4">{x.revoked ? <Badge color="red">Revoked</Badge> : <Badge color="green">Valid</Badge>}</td>
+                <td className="px-6 py-4">{x.revoked ? <Badge color="red">Revoked</Badge> : <Badge color="green">Valid</Badge>} {x.credential_jwt && <Badge color="purple">Signed</Badge>}</td>
                 <td className="px-6 py-4 text-right whitespace-nowrap">
                   <IconButton icon={Copy} title="Copy verification link" onClick={() => copy(x.verification_code)} />
                   {!x.revoked && <IconButton icon={Ban} title="Revoke" danger onClick={() => confirmAction("Revoke this credential? Verification will show it as revoked.") && awards.update(x.id, { revoked: true }, "Credential revoked.")} />}

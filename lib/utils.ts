@@ -7,7 +7,14 @@ export const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS
 
 // Native helpers added by the Android app (src-tauri/gen/android/.../MainActivity.kt): the Android
 // WebView cannot print or save blob downloads by itself.
-type AndroidBridge = { print(html: string, title: string): void; saveFile(name: string, mime: string, base64: string): string };
+type AndroidBridge = {
+  print(html: string, title: string): void;
+  saveFile(name: string, mime: string, base64: string): string;
+  // Card reader (NFC) for taking the register; missing in app versions before 0.3.0.
+  nfcStatus?(): "none" | "off" | "ready";
+  startNfc?(): void;
+  stopNfc?(): void;
+};
 export const androidBridge = (): AndroidBridge | null =>
   typeof window !== "undefined" ? ((window as unknown as { AndroidBridge?: AndroidBridge }).AndroidBridge ?? null) : null;
 export const isAndroidApp = () => isTauri() && typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
@@ -56,18 +63,23 @@ export function downloadCsv(filename: string, rows: Row[], columns: { key: strin
     return `"${t.replace(/"/g, '""')}"`;
   };
   const csv = [columns.map((c) => cell(c.label)).join(","), ...rows.map((r) => columns.map((c) => cell(r[c.key])).join(","))].join("\r\n");
+  // BOM so spreadsheet apps read UTF-8 names correctly.
+  downloadBlob(filename, "\uFEFF" + csv, "text/csv;charset=utf-8");
+}
+
+// Saves a text file where the user expects downloads: the phone's Downloads folder (Android app),
+// the Downloads folder (Windows app, whose WebView ignores blob downloads) or a normal browser download.
+export function downloadBlob(filename: string, text: string, mime: string) {
   const android = androidBridge();
   if (android) {
-    // BOM so spreadsheet apps on the phone read UTF-8 names correctly.
-    android.saveFile(filename, "text/csv", toBase64("\uFEFF" + csv));
+    android.saveFile(filename, mime.split(";")[0], toBase64(text));
     return;
   }
   if (isTauri()) {
-    // Windows app: its WebView ignores blob downloads, so the app writes the file into Downloads itself.
     void (async () => {
       const [{ invoke }, { toast }] = await Promise.all([import("@tauri-apps/api/core"), import("@/components/ui")]);
       try {
-        const path = await invoke<string>("save_to_downloads", { name: filename, text: "\uFEFF" + csv });
+        const path = await invoke<string>("save_to_downloads", { name: filename, text });
         toast(`Saved to ${path}`);
       } catch (e) {
         toast(errorMessage(e), "error");
@@ -75,7 +87,7 @@ export function downloadCsv(filename: string, rows: Row[], columns: { key: strin
     })();
     return;
   }
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const url = URL.createObjectURL(new Blob([text], { type: mime }));
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;

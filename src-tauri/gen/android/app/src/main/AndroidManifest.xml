@@ -3,6 +3,15 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- To show "You're offline" when the phone loses its connection (no user data involved). -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Asked only when used: scanning a check-in QR code (camera), sharing the school bus
+         position while driving (location), and reading student ID cards to take the register (NFC). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />

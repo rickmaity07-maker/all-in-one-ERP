@@ -105,7 +105,7 @@ const tools = [
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
@@ -154,6 +154,8 @@ const LANG_NAME: Record<string, string> = { en: "English", hi: "Hindi", bn: "Ben
 
 export async function handle(req: Request, env: Env, fetchImpl: typeof fetch = fetch): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  // Status check for the admin screen: is the AI key set? (No AI call, no user data.)
+  if (req.method === "GET") return json({ configured: !!env.ANTHROPIC_API_KEY });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
   if (!env.ANTHROPIC_API_KEY) return json({ error: "not_configured" }, 503);
   const url = env.SUPABASE_URL ?? "";

@@ -1,11 +1,12 @@
 // Automatic timetable generation.
 // Every section meets at the same time on one or more days (e.g. Mon + Wed, 09:00–10:30) in one room.
-// Hard rules: no teacher or room is in two places at once, the room must hold the section's capacity,
+// Hard rules: no teacher or room is in two places at once, the room must hold the section's capacity
+// (and be the right kind, e.g. labs only in labs), teachers are never placed in their unavailable times,
 // and nobody exceeds the daily teaching limit. Soft goal: spread each teacher's load evenly across the week.
 // Sections are placed most-constrained first (biggest classes, fewest suitable rooms, most sessions).
 
-export type Section = { id: string; name: string; teacherId: string | null; capacity: number; sessionsPerWeek: number; durationMin: number };
-export type Room = { id: string; name: string; capacity: number };
+export type Section = { id: string; name: string; teacherId: string | null; capacity: number; sessionsPerWeek: number; durationMin: number; roomType?: string | null };
+export type Room = { id: string; name: string; capacity: number; type?: string };
 export type Busy = { teacherId?: string | null; roomId?: string | null; day: string; start: string; end: string };
 export type Assignment = { sectionId: string; days: string[]; start: string; end: string; roomId: string };
 export type Options = { days?: string[]; dayStart?: string; dayEnd?: string; stepMin?: number; maxTeacherMinutesPerDay?: number };
@@ -44,7 +45,8 @@ export function generateTimetable(sections: Section[], rooms: Room[], fixed: Bus
   const teacherLoad = (t: string | null, day: string) =>
     t ? busy.filter((b) => b.teacherId === t && b.day === day).reduce((m, b) => m + (b.e - b.s), 0) : 0;
 
-  const fitting = (sec: Section) => rooms.filter((r) => r.capacity >= sec.capacity).sort((a, b) => a.capacity - b.capacity);
+  const fitting = (sec: Section) =>
+    rooms.filter((r) => r.capacity >= sec.capacity && (!sec.roomType || r.type === sec.roomType)).sort((a, b) => a.capacity - b.capacity);
   const order = [...sections].sort(
     (a, b) => fitting(a).length - fitting(b).length || b.capacity - a.capacity || b.sessionsPerWeek - a.sessionsPerWeek || a.name.localeCompare(b.name)
   );
@@ -55,7 +57,7 @@ export function generateTimetable(sections: Section[], rooms: Room[], fixed: Bus
   for (const sec of order) {
     const candidates = fitting(sec);
     if (!candidates.length) {
-      unscheduled.push({ section: sec, reason: `No room holds ${sec.capacity} students` });
+      unscheduled.push({ section: sec, reason: sec.roomType ? `No ${sec.roomType.replace("_", " ")} holds ${sec.capacity} students` : `No room holds ${sec.capacity} students` });
       continue;
     }
     let best: { a: Assignment; score: number } | null = null;

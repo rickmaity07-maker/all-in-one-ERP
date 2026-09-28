@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Car, Plus, Bus, Clock, MapPin, User, Trash2, List, CheckCircle2, AlertTriangle } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { DriverControls, LiveRoute, StopsEditor, useBusLocations } from "@/components/BusLive";
 import { useSession, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Loading, Empty, Badge, StatCard, IconButton, inputClass, toast, confirmAction } from "@/components/ui";
@@ -17,10 +19,23 @@ export default function Logistics() {
   const [search, setSearch] = useState("");
   const routes = useTable("transport_routes", { orderBy: "departure_time", ascending: true });
   const subs = useTable("transport_subscriptions");
+  const stops = useTable("transport_stops", { orderBy: "seq", ascending: true });
+  const locations = useBusLocations();
+  const [drivers, setDrivers] = useState<Row[]>([]);
+  const [children, setChildren] = useState<string[]>([]);
+  const [stopsOf, setStopsOf] = useState<Row | null>(null);
+
+  useEffect(() => {
+    if (staff) supabase.from("profiles").select("id, full_name, role").neq("role", "student").eq("active", true).order("full_name").then(({ data }) => setDrivers(data ?? []));
+    if (role === "parent" && profile) supabase.from("guardian_links").select("student_id").eq("guardian_id", profile.id).then(({ data }) => setChildren((data ?? []).map((g) => g.student_id)));
+  }, [staff, role, profile]);
+  const stopsFor = (id: string) => stops.rows.filter((s) => s.route_id === id);
+  // Stops that matter to me: my own, or my children's.
+  const myStops = (routeId: string) => subs.rows.filter((s) => s.route_id === routeId && (s.rider_id === profile?.id || children.includes(s.rider_id)) && s.stop_id).map((s) => s.stop_id);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ name: "", vehicle: "", driver: "", departure_time: "07:30", stops: "", capacity: "40" });
+  const [form, setForm] = useState({ name: "", vehicle: "", driver: "", driver_id: "", departure_time: "07:30", stops: "", capacity: "40" });
   const [manifestOf, setManifestOf] = useState<Row | null>(null);
 
   const ridersOf = (id: string) => subs.rows.filter((s) => s.route_id === id);
@@ -36,11 +51,12 @@ export default function Logistics() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    const row = await routes.insert({ ...form, capacity: parseInt(form.capacity) || 40, status: "On Time" }, "Route added.");
+    const driverName = drivers.find((d) => d.id === form.driver_id)?.full_name;
+    const row = await routes.insert({ ...form, driver_id: form.driver_id || null, driver: form.driver || driverName || null, capacity: parseInt(form.capacity) || 40, status: "On Time" }, "Route added.");
     setBusy(false);
     if (row) {
       setIsModalOpen(false);
-      setForm({ name: "", vehicle: "", driver: "", departure_time: "07:30", stops: "", capacity: "40" });
+      setForm({ name: "", vehicle: "", driver: "", driver_id: "", departure_time: "07:30", stops: "", capacity: "40" });
     }
   };
 
@@ -77,11 +93,19 @@ export default function Logistics() {
               <Field label="Vehicle"><input className={inputClass} value={form.vehicle} onChange={(e) => setForm({ ...form, vehicle: e.target.value })} placeholder="e.g. Bus WÜ-EA 123" /></Field>
               <Field label="Driver"><input className={inputClass} value={form.driver} onChange={(e) => setForm({ ...form, driver: e.target.value })} /></Field>
             </div>
+            <Field label="Driver's app account (shares the live position)">
+              <select className={inputClass} value={form.driver_id} onChange={(e) => setForm({ ...form, driver_id: e.target.value })}>
+                <option value="">None</option>
+                {drivers.map((d) => <option key={d.id} value={d.id}>{d.full_name}</option>)}
+              </select>
+            </Field>
             <Field label="Stops (in order, comma separated)"><textarea rows={2} className={inputClass} value={form.stops} onChange={(e) => setForm({ ...form, stops: e.target.value })} placeholder="Hauptbahnhof, Sanderring, Campus Nord" /></Field>
             <SubmitButton busy={busy}>Save Route</SubmitButton>
           </form>
         </Modal>
       )}
+
+      {stopsOf && <StopsEditor route={stopsOf} stops={stopsFor(stopsOf.id)} onChange={stops.reload} onClose={() => setStopsOf(null)} />}
 
       {manifestOf && (
         <Modal title={`Manifest — ${manifestOf.name}`} icon={List} onClose={() => setManifestOf(null)}>
@@ -167,11 +191,24 @@ export default function Logistics() {
                           >
                             {joined ? "Leave Route" : "Reserve Seat"}
                           </button>
+                          {staff && <IconButton icon={MapPin} title="Stops & map positions" onClick={() => setStopsOf(r)} />}
                           {staff && <IconButton icon={List} title="Rider manifest" onClick={() => setManifestOf(r)} />}
                           {staff && <IconButton icon={Trash2} title="Delete route" danger onClick={() => confirmAction(`Delete ${r.name}?`) && routes.remove(r.id, "Route deleted.")} />}
                         </div>
                       </div>
                     </div>
+                    {joined && stopsFor(r.id).length > 0 && (
+                      <label className="mt-4 flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-700">
+                        <MapPin size={14} className="text-indigo-600" /> My stop
+                        <select value={mySub(r.id)?.stop_id ?? ""} onChange={(e) => subs.update(mySub(r.id)!.id, { stop_id: e.target.value || null }, "Stop saved. You'll get a message when the bus is about 5 minutes away.")}
+                          className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 outline-none">
+                          <option value="">Choose…</option>
+                          {[...stopsFor(r.id)].sort((a, b) => a.seq - b.seq).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                      </label>
+                    )}
+                    <LiveRoute stops={stopsFor(r.id)} location={locations[r.id]} myStopIds={myStops(r.id)} />
+                    {(r.driver_id && r.driver_id === profile?.id) && <DriverControls route={r} location={locations[r.id]} />}
                   </Card>
                 );
               })}

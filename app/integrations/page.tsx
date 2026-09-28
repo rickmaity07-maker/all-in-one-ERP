@@ -8,6 +8,7 @@ import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, Card, Table, Loading, Empty, Badge, IconButton, AccessDenied, inputClass, confirmAction, toast } from "@/components/ui";
 import { errorMessage, fmtDateTime, matches, type Row } from "@/lib/utils";
 import { launchTool } from "@/lib/lti";
+import ServicesStatus from "@/components/ServicesStatus";
 
 type TabId = "webhooks" | "events" | "lti" | "api";
 
@@ -121,6 +122,7 @@ export default function Integrations() {
         </Modal>
       )}
 
+      {tab === "webhooks" && <div className="mb-6"><ServicesStatus /></div>}
       {tab === "webhooks" && (
         <Card title="Outgoing webhooks">
           <p className="text-sm text-slate-500 mb-4">

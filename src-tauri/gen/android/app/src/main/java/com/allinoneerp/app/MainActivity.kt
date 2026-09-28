@@ -4,6 +4,8 @@ import android.content.ContentValues
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.nfc.NfcAdapter
+import android.nfc.Tag
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -30,6 +32,9 @@ import java.io.File
 class MainActivity : TauriActivity() {
   // Keeps the off-screen print WebView alive until the system print dialog has taken the job.
   private var printView: WebView? = null
+  private var webViewRef: WebView? = null
+  // While a teacher has "tap cards" open, card taps are read here instead of by other apps.
+  private var nfcWanted = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
     // Back on the first screen: send the app to the background (like Home) instead of destroying the
@@ -55,6 +60,7 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onWebViewCreate(webView: WebView) {
+    webViewRef = webView
     webView.addJavascriptInterface(Bridge(), "AndroidBridge")
     watchConnectivity(webView)
   }
@@ -74,8 +80,54 @@ class MainActivity : TauriActivity() {
     })
   }
 
+  override fun onResume() {
+    super.onResume()
+    if (nfcWanted) enableNfc()
+  }
+
+  override fun onPause() {
+    NfcAdapter.getDefaultAdapter(this)?.disableReaderMode(this)
+    super.onPause()
+  }
+
+  // Reads the ID of any contactless card held to the phone and hands it to the page as an "erp:nfc" event.
+  private fun enableNfc() {
+    val adapter = NfcAdapter.getDefaultAdapter(this) ?: return
+    val flags = NfcAdapter.FLAG_READER_NFC_A or NfcAdapter.FLAG_READER_NFC_B or NfcAdapter.FLAG_READER_NFC_F or
+      NfcAdapter.FLAG_READER_NFC_V or NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK
+    adapter.enableReaderMode(this, { tag: Tag ->
+      val uid = tag.id.joinToString("") { "%02X".format(it) }
+      runOnUiThread {
+        webViewRef?.evaluateJavascript("window.dispatchEvent(new CustomEvent('erp:nfc', { detail: '$uid' }))", null)
+      }
+    }, flags, null)
+  }
+
   // Called from lib/utils.ts (printDocument, downloadCsv) when running inside the Android app.
   inner class Bridge {
+    // "none" (no NFC chip), "off" (switched off in settings) or "ready".
+    @JavascriptInterface
+    fun nfcStatus(): String {
+      val adapter = NfcAdapter.getDefaultAdapter(this@MainActivity) ?: return "none"
+      return if (adapter.isEnabled) "ready" else "off"
+    }
+
+    @JavascriptInterface
+    fun startNfc() {
+      runOnUiThread {
+        nfcWanted = true
+        enableNfc()
+      }
+    }
+
+    @JavascriptInterface
+    fun stopNfc() {
+      runOnUiThread {
+        nfcWanted = false
+        NfcAdapter.getDefaultAdapter(this@MainActivity)?.disableReaderMode(this@MainActivity)
+      }
+    }
+
     @JavascriptInterface
     fun print(html: String, title: String) {
       runOnUiThread {

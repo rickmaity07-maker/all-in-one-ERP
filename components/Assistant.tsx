@@ -70,7 +70,14 @@ function AssistantPanel({ onClose }: { onClose: () => void }) {
   });
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // null while checking; false = the assistant isn't deployed or has no AI key yet.
+  const [ready, setReady] = useState<boolean | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!navigator.onLine) return;
+    supabase.functions.invoke("assistant", { method: "GET" }).then(({ data, error }) => setReady(!error && !!(data as { configured?: boolean })?.configured));
+  }, []);
 
   useEffect(() => {
     try { sessionStorage.setItem(storeKey, JSON.stringify(messages.slice(-30))); } catch {}
@@ -90,6 +97,10 @@ function AssistantPanel({ onClose }: { onClose: () => void }) {
     setInput("");
     if (!navigator.onLine) {
       setMessages([...next, { role: "assistant", content: t("The assistant needs an internet connection."), error: "offline" }]);
+      return;
+    }
+    if (ready === false) {
+      setMessages([...next, { role: "assistant", content: t("The AI assistant isn't set up yet. An administrator needs to add the AI key (see Integrations & API)."), error: "not_configured" }]);
       return;
     }
     setBusy(true);
@@ -132,6 +143,11 @@ function AssistantPanel({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {ready === false && messages.length === 0 && (
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm flex gap-2">
+              <KeyRound size={16} className="shrink-0 mt-0.5" /> {t("The AI assistant isn't set up yet. An administrator needs to add the AI key (see Integrations & API).")}
+            </div>
+          )}
           {messages.length === 0 && (
             <div className="space-y-2">
               <p className="text-sm text-slate-500">{t("Try asking:")}</p>

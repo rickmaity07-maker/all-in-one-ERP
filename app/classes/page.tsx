@@ -1,18 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { School, Plus, CalendarRange, Users, Trash2, Pencil, UserPlus, X, MapPin, Clock, Wand2 } from "lucide-react";
+import { School, Plus, CalendarRange, Users, Trash2, Pencil, UserPlus, X, MapPin, Clock, Wand2, CalendarOff } from "lucide-react";
 import AutoSchedule from "@/components/AutoSchedule";
+import TimetableRules from "@/components/TimetableRules";
 import { supabase } from "@/lib/supabase";
 import { useSession, isAdmin, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
 import { ModuleShell, Modal, Field, SubmitButton, ActionButton, PageHeading, Card, Loading, Empty, Badge, IconButton, inputClass, toast, confirmAction } from "@/components/ui";
 import { errorMessage, initials, matches, type Row } from "@/lib/utils";
 
-type TabId = "classes" | "timetable" | "auto";
+type TabId = "classes" | "timetable" | "auto" | "cover";
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const COLORS = ["bg-indigo-500", "bg-pink-500", "bg-emerald-500", "bg-orange-500", "bg-cyan-500", "bg-purple-500", "bg-blue-500"];
-const emptyForm = { name: "", code: "", room: "", days: [] as string[], start_time: "09:00", end_time: "10:30", term: "", teacher_id: "", course_id: "", term_id: "", capacity: "", facility_id: "" };
+const emptyForm = { name: "", code: "", room: "", days: [] as string[], start_time: "09:00", end_time: "10:30", term: "", teacher_id: "", course_id: "", term_id: "", capacity: "", facility_id: "", room_type: "" };
 
 export default function ClassesPage() {
   const { role, profile } = useSession();
@@ -24,9 +25,11 @@ export default function ClassesPage() {
   const enrollments = useTable("class_enrollments");
   const [students, setStudents] = useState<Row[]>([]);
   const [teachers, setTeachers] = useState<Row[]>([]);
+  const [allStaff, setAllStaff] = useState<Row[]>([]);
   const courses = useTable("courses", { orderBy: "code", ascending: true });
   const terms = useTable("terms", { orderBy: "starts_on" });
   const facilities = useTable("facilities", { orderBy: "name", ascending: true });
+  const unavailability = useTable("teacher_unavailability", { orderBy: "day", ascending: true, enabled: admin });
 
   const [editing, setEditing] = useState<Row | "new" | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -36,9 +39,10 @@ export default function ClassesPage() {
 
   useEffect(() => {
     if (!staff) return;
-    supabase.from("profiles").select("id, full_name, role").in("role", ["student", "teacher"]).order("full_name").then(({ data }) => {
+    supabase.from("profiles").select("id, full_name, role").in("role", ["student", "teacher", "administration", "owner"]).eq("active", true).order("full_name").then(({ data }) => {
       setStudents((data ?? []).filter((p) => p.role === "student"));
       setTeachers((data ?? []).filter((p) => p.role === "teacher"));
+      setAllStaff((data ?? []).filter((p) => p.role !== "student"));
     });
   }, [staff]);
 
@@ -52,7 +56,7 @@ export default function ClassesPage() {
     setForm(
       c === "new"
         ? emptyForm
-        : { name: c.name, code: c.code ?? "", room: c.room ?? "", days: String(c.days ?? "").split(",").filter(Boolean), start_time: c.start_time ?? "", end_time: c.end_time ?? "", term: c.term ?? "", teacher_id: c.teacher_id ?? "", course_id: c.course_id ?? "", term_id: c.term_id ?? "", capacity: c.capacity ? String(c.capacity) : "", facility_id: c.facility_id ?? "" }
+        : { name: c.name, code: c.code ?? "", room: c.room ?? "", days: String(c.days ?? "").split(",").filter(Boolean), start_time: c.start_time ?? "", end_time: c.end_time ?? "", term: c.term ?? "", teacher_id: c.teacher_id ?? "", course_id: c.course_id ?? "", term_id: c.term_id ?? "", capacity: c.capacity ? String(c.capacity) : "", facility_id: c.facility_id ?? "", room_type: c.room_type ?? "" }
     );
   };
 
@@ -63,7 +67,7 @@ export default function ClassesPage() {
     setBusy(true);
     const teacher = teachers.find((t) => t.id === form.teacher_id);
     const values: Row = { name: form.name, code: form.code || null, room: form.room || null, days: form.days.join(","), start_time: form.start_time, end_time: form.end_time, term: form.term || terms.rows.find((t) => t.id === form.term_id)?.name || null,
-      course_id: form.course_id || null, term_id: form.term_id || null, capacity: form.capacity ? parseInt(form.capacity) : null, facility_id: form.facility_id || null };
+      course_id: form.course_id || null, term_id: form.term_id || null, capacity: form.capacity ? parseInt(form.capacity) : null, facility_id: form.facility_id || null, room_type: form.room_type || null };
     if (form.facility_id) values.room = facilities.rows.find((x) => x.id === form.facility_id)?.name ?? values.room;
     if (admin && form.teacher_id) Object.assign(values, { teacher_id: form.teacher_id, teacher_name: teacher?.full_name });
     const ok = editing === "new" ? await classes.insert(values, "Class created.") : await classes.update((editing as Row).id, values, "Class updated.");
@@ -95,6 +99,7 @@ export default function ClassesPage() {
         { id: "classes", label: staff ? (admin ? "All Classes" : "My Classes") : "My Classes", icon: Users, group: "Teaching" },
         { id: "timetable", label: "Weekly Timetable", icon: CalendarRange, group: "Teaching" },
         ...(admin ? [{ id: "auto" as TabId, label: "Auto-schedule", icon: Wand2, group: "Teaching" }] : []),
+        ...(staff ? [{ id: "cover" as TabId, label: "Availability & Cover", icon: CalendarOff, group: "Teaching" }] : []),
       ]}
       activeTab={activeTab}
       onTab={setActiveTab}
@@ -158,6 +163,14 @@ export default function ClassesPage() {
                 </select>
               </Field>
             </div>
+            <Field label="Room Type Needed">
+              <select className={inputClass} value={form.room_type} onChange={(e) => setForm({ ...form, room_type: e.target.value })}>
+                <option value="">Any room</option>
+                <option value="classroom">Classroom</option>
+                <option value="lecture_hall">Lecture hall</option>
+                <option value="lab">Lab</option>
+              </select>
+            </Field>
             <Field label="Term Label"><input className={inputClass} value={form.term} onChange={(e) => setForm({ ...form, term: e.target.value })} placeholder="e.g. Fall 2026" /></Field>
             <SubmitButton busy={busy}>Save Class</SubmitButton>
           </form>
@@ -194,7 +207,9 @@ export default function ClassesPage() {
       {classes.loading || enrollments.loading ? (
         <Loading />
       ) : activeTab === "auto" ? (
-        <AutoSchedule classes={classes.rows} courses={courses.rows} terms={terms.rows} facilities={facilities.rows} onApplied={() => classes.reload()} />
+        <AutoSchedule classes={classes.rows} courses={courses.rows} terms={terms.rows} facilities={facilities.rows} unavailability={unavailability.rows} onApplied={() => classes.reload()} />
+      ) : activeTab === "cover" ? (
+        <TimetableRules classes={classes.rows} staff={allStaff} />
       ) : activeTab === "classes" ? (
         <>
           <PageHeading title={staff ? "Classes & Rosters" : "My Classes"} subtitle={staff ? "Create your class sections, set the schedule and enroll students." : "The classes you are enrolled in this term."} />

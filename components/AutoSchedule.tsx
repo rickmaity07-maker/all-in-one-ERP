@@ -8,8 +8,8 @@ import { errorMessage, type Row } from "@/lib/utils";
 import { generateTimetable, type Busy, type Section } from "@/lib/timetable";
 
 // Admin tool: builds a clash-free weekly timetable for every section in a term and applies it.
-export default function AutoSchedule({ classes, courses, terms, facilities, onApplied }: {
-  classes: Row[]; courses: Row[]; terms: Row[]; facilities: Row[]; onApplied: () => void;
+export default function AutoSchedule({ classes, courses, terms, facilities, unavailability, onApplied }: {
+  classes: Row[]; courses: Row[]; terms: Row[]; facilities: Row[]; unavailability: Row[]; onApplied: () => void;
 }) {
   const [termId, setTermId] = useState(terms.find((t) => t.is_current)?.id ?? terms[0]?.id ?? "");
   const [maxHours, setMaxHours] = useState(6);
@@ -17,21 +17,25 @@ export default function AutoSchedule({ classes, courses, terms, facilities, onAp
   const [applying, setApplying] = useState(false);
 
   const inTerm = classes.filter((c) => c.term_id === termId);
-  const rooms = facilities.filter((f) => f.bookable && ["classroom", "lecture_hall", "lab"].includes(f.type)).map((f) => ({ id: f.id, name: f.name, capacity: f.capacity }));
+  const rooms = facilities.filter((f) => f.bookable && ["classroom", "lecture_hall", "lab"].includes(f.type)).map((f) => ({ id: f.id, name: f.name, capacity: f.capacity, type: f.type }));
 
   const sections: Section[] = useMemo(
     () =>
       inTerm.map((c) => {
         const credits = courses.find((x) => x.id === c.course_id)?.credits ?? 5;
-        return { id: c.id, name: c.name, teacherId: c.teacher_id, capacity: c.capacity ?? 20, sessionsPerWeek: credits >= 5 ? 2 : 1, durationMin: 90 };
+        return { id: c.id, name: c.name, teacherId: c.teacher_id, capacity: c.capacity ?? 20, sessionsPerWeek: credits >= 5 ? 2 : 1, durationMin: 90, roomType: c.room_type };
       }),
     [inTerm, courses]
   );
 
   // Everything outside this term keeps its slot and blocks its teacher and room.
-  const fixed: Busy[] = classes
-    .filter((c) => c.term_id !== termId && c.days && c.start_time && c.end_time)
-    .flatMap((c) => String(c.days).split(",").map((day) => ({ teacherId: c.teacher_id, roomId: c.facility_id, day, start: c.start_time, end: c.end_time })));
+  // Teachers' recorded unavailable times ("not on Monday mornings") block them too.
+  const fixed: Busy[] = [
+    ...classes
+      .filter((c) => c.term_id !== termId && c.days && c.start_time && c.end_time)
+      .flatMap((c) => String(c.days).split(",").map((day) => ({ teacherId: c.teacher_id, roomId: c.facility_id, day, start: c.start_time, end: c.end_time }))),
+    ...unavailability.map((u) => ({ teacherId: u.teacher_id, roomId: null, day: u.day, start: u.start_time, end: u.end_time })),
+  ];
 
   const run = () => setPreview(generateTimetable(sections, rooms, fixed, { maxTeacherMinutesPerDay: maxHours * 60 }));
 
@@ -73,7 +77,7 @@ export default function AutoSchedule({ classes, courses, terms, facilities, onAp
       </div>
     }>
       <p className="text-sm text-slate-500 mb-4">
-        Places every section of the term so that no teacher or room is double-booked, rooms fit the class size, and teaching load is spread across the week.
+        Places every section of the term so that no teacher or room is double-booked, rooms fit the class size and type (labs in labs), teachers&apos; unavailable times are respected, and teaching load is spread across the week.
         {" "}{sections.length} section(s), {rooms.length} bookable room(s) from Facilities.
       </p>
       {!rooms.length ? (
