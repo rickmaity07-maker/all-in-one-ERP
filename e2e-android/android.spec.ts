@@ -220,6 +220,8 @@ test("offline saving: a task made in airplane mode is kept on the phone, shown, 
   await login(page, owner);
   await page.goto("/tasks");
   await expect(page.getByRole("heading", { name: /Priority Workflow/ })).toBeVisible();
+  // Let the first load finish (it keeps a copy on the phone) before the connection goes.
+  await page.waitForLoadState("networkidle").catch(() => {});
   await adb("cmd connectivity airplane-mode enable");
   await expect(page.getByText(/You're offline/)).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "Create Task" }).click();
@@ -276,9 +278,10 @@ test("Settings shows the Android version and checks GitHub for a newer APK", asy
     await download.click();
     await expect.poll(() => page.evaluate(() => (window as unknown as { __opened?: string[] }).__opened ?? []), { timeout: 15_000 })
       .toContainEqual(expect.stringMatching(/\.apk$/));
-    await expect(page.getByText(/downloading in your browser/i).first()).toBeVisible();
+    // Chrome comes to the front with the download; back in the app, the instructions are shown.
     await adb("am force-stop com.android.chrome");
     await returnToApp();
+    await expect(page.getByText(/downloading in your browser/i).first()).toBeVisible();
   } else {
     // No APK published yet: the app must say it's up to date rather than offer a broken download.
     await expect(page.getByText(/latest version/i).first()).toBeVisible({ timeout: 30_000 });

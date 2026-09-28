@@ -50,16 +50,18 @@ export function useTable(table: string, { orderBy = "created_at", ascending = fa
     }
     if (!result || (result.error && isNetworkError(result.error))) {
       const cached = await cachedRows(cacheKey);
-      if (cached) {
-        // Apply the changes still waiting on this device, so they show after reopening the page offline.
-        let rows = cached.rows;
-        for (const op of (await myQueuedOps()).filter((o) => o.table === table && !o.error)) {
+      const waiting = (await myQueuedOps()).filter((o) => o.table === table && !o.error);
+      if (cached || waiting.length) {
+        // Apply the changes still waiting on this device, so they show after reopening the page offline
+        // (even when the page was never loaded online on this device).
+        let rows = cached?.rows ?? [];
+        for (const op of waiting) {
           const vals = (Array.isArray(op.values) ? op.values : op.values ? [op.values] : []) as Row[];
           if (op.kind === "insert") rows = ascending ? [...rows, ...vals.map((v) => ({ ...v, _pending: true }))] : [...vals.map((v) => ({ ...v, _pending: true })), ...rows];
           if (op.kind === "update") rows = rows.map((r) => (r.id === op.id ? { ...r, ...vals[0], _pending: true } : r));
           if (op.kind === "delete") rows = rows.filter((r) => r.id !== op.id);
         }
-        return { rows, cachedAt: cached.at };
+        return { rows, cachedAt: cached?.at ?? new Date().toISOString() };
       }
       if (result?.error) toast(`Could not load ${table.replace(/_/g, " ")}: you're offline.`, "error");
       return { rows: [], cachedAt: null };
