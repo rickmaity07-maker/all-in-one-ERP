@@ -37,12 +37,35 @@ const setStatus = (s: UpdateStatus) => {
   listeners.forEach((l) => l(s));
 };
 
+// Android may close the app while the browser downloads the new APK; remember for a while that the
+// download was started, so the "open the downloaded file" instructions are still there afterwards.
+const APK_OPENED = "erp_apk_opened";
+const OPENED_FOR_MS = 15 * 60 * 1000;
+function rememberApkOpened(version: string) {
+  try { localStorage.setItem(APK_OPENED, JSON.stringify({ version, at: Date.now() })); } catch {}
+}
+function recentApkOpened(): string | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(APK_OPENED) ?? "null") as { version: string; at: number } | null;
+    return v && Date.now() - v.at < OPENED_FOR_MS ? v.version : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function checkForUpdate(manual = false): Promise<UpdateStatus> {
   if (!isTauri()) {
     setStatus({ state: "unsupported" });
     return status;
   }
   if (status.state === "downloading" || status.state === "installing") return status;
+  if (!manual && status.state === "idle" && isAndroidApp()) {
+    const opened = recentApkOpened();
+    if (opened && newer(opened, await getAppVersion())) {
+      setStatus({ state: "apk-opened", version: opened });
+      return status;
+    }
+  }
   // A background check must not replace the "open the downloaded file" instructions.
   if (!manual && status.state === "apk-opened") return status;
   setStatus({ state: "checking" });
@@ -79,8 +102,9 @@ export async function installUpdate() {
     if (!apkUrl || status.state !== "available") return;
     // The browser downloads the APK; opening it installs the update over this version (same signing key).
     const version = status.version;
-    await openExternal(apkUrl);
+    rememberApkOpened(version);
     setStatus({ state: "apk-opened", version });
+    await openExternal(apkUrl);
     return;
   }
   if (!pending) {

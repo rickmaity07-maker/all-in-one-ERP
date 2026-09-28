@@ -39,37 +39,46 @@ export function useTable(table: string, { orderBy = "created_at", ascending = fa
   }, [ascending]);
   const cacheKey = `${table}|${eqKey}|${orderBy}|${ascending}`;
 
-  const fetchRows = useCallback(async (): Promise<{ rows: Row[]; cachedAt: string | null }> => {
+  // The copy kept on this device, with the changes still waiting to sync applied (so they show after
+  // reopening a page offline, even when the page was never loaded online on this device).
+  const deviceRows = useCallback(async (): Promise<{ rows: Row[]; cachedAt: string } | null> => {
+    const cached = await cachedRows(cacheKey);
+    const waiting = (await myQueuedOps()).filter((o) => o.table === table && !o.error);
+    if (!cached && !waiting.length) return null;
+    let rows = cached?.rows ?? [];
+    for (const op of waiting) {
+      const vals = (Array.isArray(op.values) ? op.values : op.values ? [op.values] : []) as Row[];
+      if (op.kind === "insert") rows = ascending ? [...rows, ...vals.map((v) => ({ ...v, _pending: true }))] : [...vals.map((v) => ({ ...v, _pending: true })), ...rows];
+      if (op.kind === "update") rows = rows.map((r) => (r.id === op.id ? { ...r, ...vals[0], _pending: true } : r));
+      if (op.kind === "delete") rows = rows.filter((r) => r.id !== op.id);
+    }
+    return { rows, cachedAt: cached?.at ?? new Date().toISOString() };
+  }, [cacheKey, table, ascending]);
+
+  // onSlow: called with the device copy when the server hasn't answered within a few seconds
+  // (a phone that thinks it's online but has no signal), so the page isn't left empty meanwhile.
+  const fetchRows = useCallback(async (onSlow?: (r: { rows: Row[]; cachedAt: string }) => void): Promise<{ rows: Row[]; cachedAt: string | null }> => {
     let query = supabase.from(table).select("*");
     for (const [k, v] of Object.entries(JSON.parse(eqKey) as Record<string, string>)) query = query.eq(k, v);
     let result: Awaited<typeof query> | null = null;
+    const slow = onSlow ? setTimeout(() => void deviceRows().then((r) => r && onSlow(r)), 6000) : undefined;
     try {
       result = online() ? await query.order(orderBy, { ascending }) : null;
     } catch {
       result = null;
+    } finally {
+      clearTimeout(slow);
     }
     if (!result || (result.error && isNetworkError(result.error))) {
-      const cached = await cachedRows(cacheKey);
-      const waiting = (await myQueuedOps()).filter((o) => o.table === table && !o.error);
-      if (cached || waiting.length) {
-        // Apply the changes still waiting on this device, so they show after reopening the page offline
-        // (even when the page was never loaded online on this device).
-        let rows = cached?.rows ?? [];
-        for (const op of waiting) {
-          const vals = (Array.isArray(op.values) ? op.values : op.values ? [op.values] : []) as Row[];
-          if (op.kind === "insert") rows = ascending ? [...rows, ...vals.map((v) => ({ ...v, _pending: true }))] : [...vals.map((v) => ({ ...v, _pending: true })), ...rows];
-          if (op.kind === "update") rows = rows.map((r) => (r.id === op.id ? { ...r, ...vals[0], _pending: true } : r));
-          if (op.kind === "delete") rows = rows.filter((r) => r.id !== op.id);
-        }
-        return { rows, cachedAt: cached?.at ?? new Date().toISOString() };
-      }
+      const local = await deviceRows();
+      if (local) return local;
       if (result?.error) toast(`Could not load ${table.replace(/_/g, " ")}: you're offline.`, "error");
       return { rows: [], cachedAt: null };
     }
     if (result.error) toast(`Could not load ${table.replace(/_/g, " ")}: ${result.error.message}`, "error");
     else void cacheRows(cacheKey, result.data ?? []);
     return { rows: (result.data ?? []) as Row[], cachedAt: null };
-  }, [table, orderBy, ascending, eqKey, cacheKey]);
+  }, [table, orderBy, ascending, eqKey, cacheKey, deviceRows]);
 
   // Refreshes in place: the rows on screen stay until the new ones arrive (no loading flash that
   // would reset what the page is showing, e.g. a confirmation message).
@@ -77,7 +86,13 @@ export function useTable(table: string, { orderBy = "created_at", ascending = fa
     if (!enabled) return;
     const mine = ++loadSeq.current;
     inFlight.current++;
-    const r = await fetchRows().finally(() => inFlight.current--);
+    const r = await fetchRows((early) => {
+      if (mine === loadSeq.current) {
+        apply(early.rows);
+        setOfflineSince(early.cachedAt);
+        setLoading(false);
+      }
+    }).finally(() => inFlight.current--);
     if (mine !== loadSeq.current) return;
     apply(r.rows);
     setOfflineSince(r.cachedAt);
@@ -90,7 +105,13 @@ export function useTable(table: string, { orderBy = "created_at", ascending = fa
     const load = () => {
       const mine = ++loadSeq.current;
       inFlight.current++;
-      return fetchRows().finally(() => inFlight.current--).then((r) => {
+      return fetchRows((early) => {
+        if (!cancelled && mine === loadSeq.current) {
+          apply(early.rows);
+          setOfflineSince(early.cachedAt);
+          setLoading(false);
+        }
+      }).finally(() => inFlight.current--).then((r) => {
         if (cancelled || mine !== loadSeq.current) return;
         apply(r.rows);
         setOfflineSince(r.cachedAt);
