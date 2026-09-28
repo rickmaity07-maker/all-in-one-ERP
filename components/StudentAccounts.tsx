@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Wallet, Lock, Unlock, Receipt, HandCoins, CalendarClock, Plus, Printer, RefreshCw, ShieldCheck } from "lucide-react";
 import PayOnline from "@/components/PayOnline";
+import { useT } from "@/lib/i18n";
 import { supabase } from "@/lib/supabase";
 import { Card, Table, Badge, Modal, Field, SubmitButton, Loading, Empty, StatCard, IconButton, inputClass, toast } from "@/components/ui";
 import { errorMessage, escapeHtml, fmtDate, fmtDateTime, localDate, matches, money, printDocument, type Row } from "@/lib/utils";
@@ -286,6 +287,7 @@ export function AccountsAdmin({ search }: { search: string }) {
 
 // Student / parent view: their own statement, aid offers and installment schedule.
 export function MyAccount({ studentIds, names }: { studentIds: string[]; names: Record<string, string> }) {
+  const t = useT();
   const [accounts, setAccounts] = useState<Row[]>([]);
   const [ledger, setLedger] = useState<Row[]>([]);
   const [aid, setAid] = useState<Row[]>([]);
@@ -345,7 +347,7 @@ export function MyAccount({ studentIds, names }: { studentIds: string[]; names: 
           <Card key={acct.account_id} title={`Account — ${names[acct.student_id] ?? ""}`} action={
             <div className="flex flex-wrap gap-2">
               {payMode !== "off" && Number(acct.balance) > 0 && (
-                <button onClick={() => setPaying(acct)} className="flex items-center gap-2 text-sm font-bold text-white bg-emerald-600 px-4 py-2 rounded-xl hover:bg-emerald-700"><ShieldCheck size={16} /> Pay online</button>
+                <button onClick={() => setPaying(acct)} className="flex items-center gap-2 text-sm font-bold text-white bg-emerald-600 px-4 py-2 rounded-xl hover:bg-emerald-700"><ShieldCheck size={16} /> {t("Pay online")}</button>
               )}
               <button onClick={() => printStatement(names[acct.student_id] ?? "", entries, Number(acct.balance))} className="flex items-center gap-2 text-sm font-bold text-indigo-600 bg-indigo-50 px-4 py-2 rounded-xl"><Printer size={16} /> Statement</button>
             </div>
@@ -366,7 +368,7 @@ export function MyAccount({ studentIds, names }: { studentIds: string[]; names: 
             </Table>
             {payments.length > 0 && (
               <div className="mt-4">
-                <p className="text-xs font-bold uppercase text-slate-400 mb-2">Online payments</p>
+                <p className="text-xs font-bold uppercase text-slate-400 mb-2">{t("Online payments")}</p>
                 <div className="space-y-1">
                   {payments.map((o) => (
                     <div key={o.id} className="flex flex-wrap items-center gap-2 text-sm">

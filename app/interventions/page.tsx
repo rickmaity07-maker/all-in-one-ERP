@@ -5,7 +5,7 @@ import { LifeBuoy, AlertTriangle, FolderOpen, ListChecks, Plus, TrendingUp, Tren
 import { supabase } from "@/lib/supabase";
 import { useSession, isStaff } from "@/lib/session";
 import { useTable } from "@/lib/useTable";
-import { ModuleShell, Modal, Field, SubmitButton, Card, Table, Badge, Empty, Loading, AccessDenied, StatCard, inputClass } from "@/components/ui";
+import { ModuleShell, Modal, Field, SubmitButton, ActionButton, Card, Table, Badge, Empty, Loading, AccessDenied, StatCard, inputClass } from "@/components/ui";
 import { fmtDate, localDate, matches, type Row } from "@/lib/utils";
 import { useT } from "@/lib/i18n";
 
@@ -55,7 +55,7 @@ export default function Interventions() {
   const [people, setPeople] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState<Row | null>(null);
-  const [openForm, setOpenForm] = useState({ mentor_id: "", reason: "", goal: "" });
+  const [openForm, setOpenForm] = useState({ student_id: "", mentor_id: "", reason: "", goal: "" });
   const [viewing, setViewing] = useState<Row | null>(null);
   const [impact, setImpact] = useState<Row | null>(null);
   const [actionForm, setActionForm] = useState({ kind: "meeting", note: "", owner_id: "", due_on: "" });
@@ -93,13 +93,15 @@ export default function Interventions() {
 
   const startCase = (r: Row) => {
     setOpening(r);
-    setOpenForm({ mentor_id: profile?.id ?? "", reason: explain(r.factors) ? `Risk ${r.score}: ${explain(r.factors)}` : "", goal: "" });
+    setOpenForm({ student_id: r.student_id ?? "", mentor_id: profile?.id ?? "", reason: r.factors && explain(r.factors) ? `Risk ${r.score}: ${explain(r.factors)}` : "", goal: "" });
   };
   const saveCase = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!opening) return;
     setBusy(true);
-    const row = await cases.insert({ student_id: opening.student_id, mentor_id: openForm.mentor_id || null, reason: openForm.reason.trim(), goal: openForm.goal.trim() || null }, "Intervention opened.");
+    const studentId = opening.student_id || openForm.student_id;
+    if (!studentId) return setBusy(false);
+    const row = await cases.insert({ student_id: studentId, mentor_id: openForm.mentor_id || null, reason: openForm.reason.trim(), goal: openForm.goal.trim() || null }, "Intervention opened.");
     setBusy(false);
     if (row) setOpening(null);
   };
@@ -132,10 +134,19 @@ export default function Interventions() {
       search={search}
       onSearch={setSearch}
       searchPlaceholder="Search students..."
+      action={<ActionButton icon={Plus} onClick={() => startCase({})}>New case</ActionButton>}
     >
       {opening && (
-        <Modal title={`Open intervention — ${name(opening.student_id)}`} icon={LifeBuoy} onClose={() => setOpening(null)}>
+        <Modal title={opening.student_id ? `Open intervention — ${name(opening.student_id)}` : "Open intervention"} icon={LifeBuoy} onClose={() => setOpening(null)}>
           <form onSubmit={saveCase} className="space-y-4">
+            {!opening.student_id && (
+              <Field label="Student">
+                <select required className={inputClass} value={openForm.student_id} onChange={(e) => setOpenForm({ ...openForm, student_id: e.target.value })}>
+                  <option value="">{t("Select…")}</option>
+                  {people.filter((p) => p.role === "student" && !openCaseFor(p.id)).map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
+                </select>
+              </Field>
+            )}
             <Field label="Mentor">
               <select className={inputClass} value={openForm.mentor_id} onChange={(e) => setOpenForm({ ...openForm, mentor_id: e.target.value })}>
                 <option value="">{t("No mentor yet")}</option>

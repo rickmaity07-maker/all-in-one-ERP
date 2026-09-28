@@ -160,7 +160,8 @@ export const test = base.extend({
 });
 
 // CSV export: a browser download on desktop, a real file in the phone's Downloads folder on Android.
-export async function exportCsv(page: Page, click: () => Promise<void>): Promise<{ name: string; text: string }> {
+// Also used for other text downloads (ext), e.g. signed credentials.
+export async function exportCsv(page: Page, click: () => Promise<void>, ext = ".csv"): Promise<{ name: string; text: string }> {
   if (onDesktopApp) {
     // The desktop app saves downloads straight into the Downloads folder.
     const dir = join(homedir(), "Downloads");
@@ -168,12 +169,12 @@ export async function exportCsv(page: Page, click: () => Promise<void>): Promise
     await click();
     let name = "";
     await expect.poll(() => {
-      name = readdirSync(dir).find((f) => f.endsWith(".csv") && !f.endsWith(".crdownload") && statSync(join(dir, f)).mtimeMs >= since - 1000) ?? "";
+      name = readdirSync(dir).find((f) => f.endsWith(ext) && !f.endsWith(".crdownload") && statSync(join(dir, f)).mtimeMs >= since - 1000) ?? "";
       return name;
     }, { timeout: 15_000 }).not.toBe("");
     const text = readFileSync(join(dir, name), "utf8").replace(/^﻿/, "");
     unlinkSync(join(dir, name));
-    return { name: name.replace(/ \(\d+\)(?=\.csv$)/, ""), text };
+    return { name: name.replace(/ \(\d+\)(?=\.\w+$)/, ""), text };
   }
   if (!onAndroid) {
     const [dl] = await Promise.all([page.waitForEvent("download"), click()]);
