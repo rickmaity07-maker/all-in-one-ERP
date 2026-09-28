@@ -527,7 +527,7 @@ test("classes: room and teacher double-booking is refused", async ({ page }) => 
     await page.getByRole("group", { name: "Days" }).getByRole("button", { name: "Tue", exact: true }).click();
     await page.getByLabel("Starts").fill(start);
     await page.getByLabel("Ends").fill(end);
-    await page.getByLabel("Room").fill(room);
+    await page.getByLabel("Room", { exact: true }).fill(room);
     await page.getByLabel("Term Label").fill(`E2E-${RUN}`);
     await page.getByRole("button", { name: "Save Class" }).click();
   };

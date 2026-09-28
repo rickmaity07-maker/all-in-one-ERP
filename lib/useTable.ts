@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 import { errorMessage, type Row } from "./utils";
 import { toast } from "@/components/ui";
@@ -25,6 +25,18 @@ export function useTable(table: string, { orderBy = "created_at", ascending = fa
   // When the rows came from the device because the server couldn't be reached: when they were saved.
   const [offlineSince, setOfflineSince] = useState<string | null>(null);
   const eqKey = JSON.stringify(eq ?? {});
+  // Only the newest load may update the rows (an older, slower response must not overwrite newer data).
+  const loadSeq = useRef(0);
+  // Loads still on their way. A change saved meanwhile would be overwritten by their older answer,
+  // so after such a change the table is loaded again.
+  const inFlight = useRef(0);
+  // Rows saved on this device but not yet synced stay visible whatever a load returns.
+  const apply = useCallback((fetched: Row[]) => {
+    setRows((prev) => {
+      const pending = prev.filter((r) => r._pending && !fetched.some((f) => f.id === r.id));
+      return ascending ? [...fetched, ...pending] : [...pending, ...fetched];
+    });
+  }, [ascending]);
   const cacheKey = `${table}|${eqKey}|${orderBy}|${ascending}`;
 
   const fetchRows = useCallback(async (): Promise<{ rows: Row[]; cachedAt: string | null }> => {
@@ -51,29 +63,40 @@ export function useTable(table: string, { orderBy = "created_at", ascending = fa
   // would reset what the page is showing, e.g. a confirmation message).
   const reload = useCallback(async () => {
     if (!enabled) return;
-    const r = await fetchRows();
-    setRows(r.rows);
+    const mine = ++loadSeq.current;
+    inFlight.current++;
+    const r = await fetchRows().finally(() => inFlight.current--);
+    if (mine !== loadSeq.current) return;
+    apply(r.rows);
     setOfflineSince(r.cachedAt);
     setLoading(false);
-  }, [fetchRows, enabled]);
+  }, [fetchRows, enabled, apply]);
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    fetchRows().then((r) => {
-      if (cancelled) return;
-      setRows(r.rows);
-      setOfflineSince(r.cachedAt);
-      setLoading(false);
-    });
-    // Once offline changes have reached the server, show the server's version.
-    const onSynced = () => void fetchRows().then((r) => !cancelled && (setRows(r.rows), setOfflineSince(r.cachedAt)));
+    const load = () => {
+      const mine = ++loadSeq.current;
+      inFlight.current++;
+      return fetchRows().finally(() => inFlight.current--).then((r) => {
+        if (cancelled || mine !== loadSeq.current) return;
+        apply(r.rows);
+        setOfflineSince(r.cachedAt);
+        setLoading(false);
+      });
+    };
+    void load();
+    // Once offline changes have reached the server, show the server's version (and drop the "pending" copies).
+    const onSynced = () => {
+      setRows((prev) => prev.filter((r) => !r._pending));
+      void load();
+    };
     window.addEventListener("erp:synced", onSynced);
     return () => {
       cancelled = true;
       window.removeEventListener("erp:synced", onSynced);
     };
-  }, [fetchRows, enabled]);
+  }, [fetchRows, enabled, apply]);
 
   const insert = useCallback(
     async (values: Row, successMsg?: string) => {
@@ -100,10 +123,11 @@ export function useTable(table: string, { orderBy = "created_at", ascending = fa
         return null;
       }
       setRows((prev) => (ascending ? [...prev, data[0]] : [data[0], ...prev]));
+      if (inFlight.current) void reload();
       if (successMsg) toast(successMsg);
       return data[0] as Row;
     },
-    [table, ascending]
+    [table, ascending, reload]
   );
 
   const update = useCallback(
@@ -126,10 +150,11 @@ export function useTable(table: string, { orderBy = "created_at", ascending = fa
         return false;
       }
       setRows((prev) => prev.map((r) => (r.id === id ? data[0] : r)));
+      if (inFlight.current) void reload();
       if (successMsg) toast(successMsg);
       return true;
     },
-    [table]
+    [table, reload]
   );
 
   const remove = useCallback(
@@ -152,10 +177,11 @@ export function useTable(table: string, { orderBy = "created_at", ascending = fa
         return false;
       }
       setRows((prev) => prev.filter((r) => r.id !== id));
+      if (inFlight.current) void reload();
       if (successMsg) toast(successMsg);
       return true;
     },
-    [table]
+    [table, reload]
   );
 
   return { rows, setRows, loading, reload, insert, update, remove, offlineSince };

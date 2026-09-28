@@ -237,6 +237,8 @@ test("compliance: versioned documents and a statutory report with CSV", async ({
   await modal(page).getByLabel("What changed").fill("Updated PPE rules");
   await modal(page).getByRole("button", { name: "Publish" }).click();
   await expectToast(page, /Document published/);
+  // The list refreshes in place: wait for the superseded v1 to drop out before checking the row.
+  await expect(row(page, title).filter({ hasText: "v1" })).toHaveCount(0);
   await expect(row(page, title)).toContainText("v2");
   await page.getByLabel("Show old versions").check();
   await expect(row(page, title).filter({ hasText: "v1" })).toContainText("superseded");

@@ -47,6 +47,10 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       if (event !== "SIGNED_IN" && event !== "INITIAL_SESSION") return;
       const uid = session?.user.id;
       if (!uid) return;
+      // Only a device without its own choice yet takes the language saved in the account.
+      try {
+        if (localStorage.getItem(KEY)) return;
+      } catch {}
       // Not inside the auth callback itself: a Supabase call made there can deadlock the sign-in.
       setTimeout(() => void supabase.from("user_metadata").select("preferences").eq("user_id", uid).maybeSingle().then(({ data: row }) => {
         const saved = (row?.preferences as { language?: string } | undefined)?.language;

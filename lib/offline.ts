@@ -57,9 +57,20 @@ export const isNetworkError = (e: unknown) =>
   );
 export const online = () => typeof navigator === "undefined" || navigator.onLine;
 
+// The signed-in user, remembered from auth events. (Asking supabase.auth.getSession() on every data
+// load would queue each call behind the client's session lock and slow every page down.)
+let userId: string | null | undefined;
+let userKnown: () => void = () => {};
+const firstAuthEvent = new Promise<void>((resolve) => (userKnown = resolve));
+if (typeof window !== "undefined") {
+  supabase.auth.onAuthStateChange((_event, session) => {
+    userId = session?.user.id ?? null;
+    userKnown();
+  });
+}
 async function currentUser() {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.user.id ?? null;
+  if (userId === undefined) await Promise.race([firstAuthEvent, new Promise((r) => setTimeout(r, 3000))]);
+  return userId ?? null;
 }
 
 // ---------- Read cache ----------

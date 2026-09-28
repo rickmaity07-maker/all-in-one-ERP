@@ -67,7 +67,8 @@ async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): P
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), read ? 15_000 : 30_000);
     try {
-      return await fetch(input, { ...init, signal: ctl.signal });
+      // no-store: the browser must never answer a read from its cache (data changes all the time).
+      return await fetch(input, { ...init, signal: ctl.signal, ...(read ? { cache: 'no-store' as RequestCache } : {}) });
     } catch (e) {
       if (ctl.signal.aborted && read && attempt === 0) continue;
       if (ctl.signal.aborted) throw new TypeError('Failed to fetch (the server took too long to answer)');
@@ -81,5 +82,10 @@ async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): P
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder.supabase.co',
   supabaseAnonKey || 'placeholder-anon-key',
-  { auth: { storage: typeof window !== 'undefined' ? durableStorage : undefined }, global: { fetch: fetchWithTimeout } },
+  {
+    auth: {
+      storage: typeof window !== 'undefined' ? durableStorage : undefined,
+    },
+    global: { fetch: fetchWithTimeout },
+  },
 );
