@@ -1,9 +1,11 @@
 import { expect } from "@playwright/test";
-import { test, hasOwner, owner, login, watchForErrors } from "./helpers";
+import { test, hasOwner, owner, login, watchForErrors, onDesktopApp } from "./helpers";
 
 // The web version on a phone: nothing may be wider than the screen, and the menu must work.
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 test.skip(!hasOwner, "Set E2E_OWNER_EMAIL and E2E_OWNER_PASSWORD in .env.local");
+// The Windows app window keeps its desktop size, so phone layout is checked on the website and the Android phone instead.
+test.skip(onDesktopApp, "The Windows app window can't be shrunk to phone size.");
 test.setTimeout(180_000);
 
 const ROUTES = [

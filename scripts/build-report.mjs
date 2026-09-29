@@ -182,6 +182,7 @@ ${[
   ["All", "An update check finishing after the download had started replaced the download instructions", "Checks leave a started download alone"],
   ["Finance", "On a slow connection a statement printed right after a payment could miss that payment (an older answer overwrote the refreshed ledger)", "Older answers never replace newer ones"],
   ["Phone", "The sign-in card jumped when the update notice appeared, so a tap could miss the button", "Only scrolling pages make room for the notice"],
+  ["Homework", "Choosing the class that was already shown left the load chart on \"Syncing\" for good", "The chart is only cleared when the choice really changes"],
   ["Server", "Re-running the database setup failed once alumni accounts existed (an old step still allowed only five roles)", "Every step now allows all six roles; a test re-runs the setup with alumni present"],
 ].map(([w, p, f]) => `<tr><td>${w}</td><td>${p}</td><td>${f}</td></tr>`).join("")}
 </tbody></table></section>
