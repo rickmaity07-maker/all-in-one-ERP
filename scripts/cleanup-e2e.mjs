@@ -19,7 +19,7 @@ const LABELLED = {
   admissions: "applicant_name", leave_requests: "reason", registrar_records: "student_name", chat_messages: "message",
   reservations: "title", assets: "name", badges: "name", fee_schedules: "name", lti_tools: "name", webhook_endpoints: "url",
   purchase_orders: "vendor", grants: "title", campaigns: "name", institutional_documents: "title", devices: "name", access_cards: "card_uid",
-  notifications: "title", message_outbox: "body",
+  notifications: "title", message_outbox: "body", canteen_items: "name",
 };
 
 let total = 0;

@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Plus, BookOpen, Video, FileText, ClipboardList, Users, CloudUpload, PlayCircle, Trash2, Download,
-  GraduationCap, Upload, Inbox, Loader2, CheckCircle2, AppWindow,
+  GraduationCap, Upload, Inbox, Loader2, CheckCircle2, AppWindow, AlertTriangle,
 } from "lucide-react";
 import LtiTools from "@/components/LtiTools";
 import { supabase } from "@/lib/supabase";
@@ -28,8 +28,29 @@ export default function ELearningPortal() {
 
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ title: "", file_type: "Video", description: "", due_date: "", size_mb: "", source: "file", external_url: "" });
+  const [form, setForm] = useState({ title: "", file_type: "Video", description: "", due_date: "", size_mb: "", source: "file", external_url: "", class_id: "" });
   const [file, setFile] = useState<File | null>(null);
+  const [myClasses, setMyClasses] = useState<Row[]>([]);
+  const [dueLoad, setDueLoad] = useState<{ n: number; heavy: number } | null>(null);
+
+  // Assignments can be set for one class; teachers see how much homework that class already has due that day.
+  useEffect(() => {
+    if (!isUploadOpen || !staff) return;
+    let q = supabase.from("classes").select("id, name").order("name");
+    if (role === "teacher") q = q.eq("teacher_id", profile?.id ?? "");
+    void q.then(({ data }) => setMyClasses(data ?? []));
+  }, [isUploadOpen, staff, role, profile?.id]);
+  useEffect(() => {
+    if (form.file_type !== "Assignment" || !form.class_id || !form.due_date) return;
+    let off = false;
+    void Promise.all([
+      supabase.rpc("homework_load", { p_class: form.class_id, p_from: form.due_date, p_to: form.due_date }),
+      supabase.from("app_settings").select("value").eq("key", "homework_daily_limit").maybeSingle(),
+    ]).then(([l, s]) => {
+      if (!off) setDueLoad({ n: (l.data as Row[] | null)?.[0]?.heaviest ?? 0, heavy: Number(s.data?.value) || 3 });
+    });
+    return () => { off = true; };
+  }, [form.file_type, form.class_id, form.due_date]);
 
   const [viewSubsFor, setViewSubsFor] = useState<Row | null>(null);
   const [submitFor, setSubmitFor] = useState<Row | null>(null);
@@ -48,12 +69,13 @@ export default function ELearningPortal() {
       const size_mb = !asLink && file ? Math.round((file.size / 1024 / 1024) * 10) / 10 : 0;
       const icon_color = form.file_type === "Video" ? "purple" : form.file_type === "Assignment" ? "orange" : "blue";
       const row = await materials.insert(
-        { title: form.title, file_type: form.file_type, description: form.description || null, due_date: form.due_date || null, size_mb, icon_color, file_path, external_url },
+        { title: form.title, file_type: form.file_type, description: form.description || null, due_date: form.due_date || null, size_mb, icon_color, file_path, external_url,
+          ...(form.file_type === "Assignment" && form.class_id ? { class_id: form.class_id } : {}) },
         "Resource published."
       );
       if (row) {
         setIsUploadOpen(false);
-        setForm({ title: "", file_type: "Video", description: "", due_date: "", size_mb: "", source: "file", external_url: "" });
+        setForm({ title: "", file_type: "Video", description: "", due_date: "", size_mb: "", source: "file", external_url: "", class_id: "" });
         setFile(null);
         setActiveTab(row.file_type === "Assignment" ? "assignments" : row.file_type === "Video" ? "lectures" : "materials");
       }
@@ -150,7 +172,21 @@ export default function ELearningPortal() {
             </Field>
             <Field label="Description"><textarea rows={2} className={inputClass} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field>
             {form.file_type === "Assignment" && (
-              <Field label="Due Date"><input type="date" className={inputClass} value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></Field>
+              <>
+                <Field label="Class">
+                  <select className={inputClass} value={form.class_id} onChange={(e) => { if (e.target.value !== form.class_id) setDueLoad(null); setForm({ ...form, class_id: e.target.value }); }}>
+                    <option value="">All students</option>
+                    {myClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Due Date"><input type="date" className={inputClass} value={form.due_date} onChange={(e) => { if (e.target.value !== form.due_date) setDueLoad(null); setForm({ ...form, due_date: e.target.value }); }} /></Field>
+                {form.class_id && form.due_date && dueLoad && (
+                  <p role="status" className={`p-3 rounded-xl text-sm font-semibold flex items-center gap-2 ${dueLoad.n >= dueLoad.heavy ? "bg-orange-50 text-orange-800" : "bg-slate-50 text-slate-600"}`}>
+                    {dueLoad.n >= dueLoad.heavy && <AlertTriangle size={16} className="shrink-0" />}
+                    {dueLoad.n === 0 ? "Nothing else is due that day for this class." : `Some students in this class already have ${dueLoad.n} piece${dueLoad.n === 1 ? "" : "s"} of homework due that day.${dueLoad.n >= dueLoad.heavy ? " Consider another day." : ""}`}
+                  </p>
+                )}
+              </>
             )}
             {form.file_type !== "Assignment" && (
               <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Source">

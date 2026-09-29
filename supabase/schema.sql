@@ -1204,7 +1204,8 @@ begin
     if new.file_type = 'Assignment' then
       insert into public.notifications (user_id, title, body, link)
       select p.id, 'New assignment: ' || new.title, coalesce('Due ' || to_char(new.due_date, 'DD Mon YYYY'), 'No due date'), '/e-learning'
-      from public.profiles p where p.active and p.role = 'student';
+      from public.profiles p where p.active and p.role = 'student'
+        and (new.class_id is null or exists (select 1 from public.class_enrollments e where e.class_id = new.class_id and e.student_id = p.id));
     end if;
   elsif tg_table_name = 'chat_messages' then
     if new.channel like 'dm:%' then
@@ -1246,10 +1247,11 @@ end $$;
 
 notify pgrst, 'reload schema';
 
--- Older databases restricted roles to four values; allow the parent role too.
+-- Older databases restricted roles to four values; allow the parent role too. (Alumni is listed here as
+-- well so re-running this file never fails on a database that already has alumni; see section 11.)
 alter table public.profiles drop constraint if exists profiles_role_check;
 alter table public.profiles add constraint profiles_role_check
-  check (role in ('owner', 'administration', 'teacher', 'student', 'parent'));
+  check (role in ('owner', 'administration', 'teacher', 'student', 'parent', 'alumni'));
 notify pgrst, 'reload schema';
 
 -- Older databases made optional fields mandatory, which made saves fail silently
@@ -3423,6 +3425,14 @@ create table if not exists public.payment_intents (
   created_at timestamptz not null default now(),
   completed_at timestamptz
 );
+-- 'fees' pays the account balance; 'wallet' tops up the canteen wallet (section 17).
+alter table public.payment_intents add column if not exists purpose text not null default 'fees';
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'payment_intents_purpose_check') then
+    alter table public.payment_intents add constraint payment_intents_purpose_check check (purpose in ('fees', 'wallet'));
+  end if;
+end $$;
 
 create or replace function public.balance_of(p_student uuid) returns numeric
 language sql stable security definer set search_path = public as $$
@@ -3452,7 +3462,7 @@ end $$;
 -- through a signed webhook instead, and this function refuses to run outside mock mode.
 create or replace function public.mock_gateway_complete(p_intent uuid, p_success boolean, p_detail text default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare pi record; eid uuid; label text;
+declare pi record; eid uuid; label text; nb numeric;
 begin
   if coalesce(public.setting('payments_mode') #>> '{}', 'off') <> 'mock' then raise exception 'The test gateway is not enabled.'; end if;
   select * into pi from public.payment_intents where id = p_intent for update;
@@ -3462,11 +3472,21 @@ begin
     update public.payment_intents set status = 'failed', failure_reason = coalesce(p_detail, 'Declined by the bank'), completed_at = now() where id = p_intent;
     return jsonb_build_object('ok', false, 'reason', coalesce(p_detail, 'Declined by the bank'));
   end if;
+  label := case pi.method when 'upi' then 'UPI' when 'card' then 'card' else 'net banking' end;
+  if pi.purpose = 'wallet' then
+    insert into public.canteen_wallets (student_id) values (pi.student_id) on conflict do nothing;
+    update public.canteen_wallets set balance = balance + pi.amount, updated_at = now() where student_id = pi.student_id returning balance into nb;
+    insert into public.canteen_transactions (student_id, kind, amount, reference, balance_after) values (pi.student_id, 'topup', pi.amount, pi.gateway_ref, nb);
+    update public.payment_intents set status = 'succeeded', detail = left(p_detail, 60), completed_at = now() where id = p_intent;
+    insert into public.notifications (user_id, title, body, link)
+    select u.id, 'Canteen wallet topped up', format('%s added by %s. Wallet balance %s. Reference %s.', to_char(pi.amount, 'FM999G999G990D00'), label, to_char(nb, 'FM999G999G990D00'), pi.gateway_ref), '/canteen'
+    from (select pi.student_id as id union select guardian_id from public.guardian_links where student_id = pi.student_id) u;
+    return jsonb_build_object('ok', true, 'reference', pi.gateway_ref, 'balance', nb);
+  end if;
   if round(pi.amount, 2) > round(public.balance_of(pi.student_id), 2) then
     update public.payment_intents set status = 'failed', failure_reason = 'Balance changed; nothing charged', completed_at = now() where id = p_intent;
     return jsonb_build_object('ok', false, 'reason', 'The balance changed while you were paying. Nothing was charged.');
   end if;
-  label := case pi.method when 'upi' then 'UPI' when 'card' then 'card' else 'net banking' end;
   eid := public.post_entry(public.ensure_account(pi.student_id), null, 'payment', pi.amount,
     'Online payment — ' || label || ' (test mode)', 'gateway', pi.method, pi.gateway_ref);
   update public.payment_intents set status = 'succeeded', detail = left(p_detail, 60), ledger_entry_id = eid, completed_at = now() where id = p_intent;
@@ -4235,6 +4255,446 @@ do $$
 begin
   execute 'drop trigger if exists audit_gate_passes on public.gate_passes';
   execute 'create trigger audit_gate_passes after insert or update or delete on public.gate_passes for each row execute function public.write_audit()';
+end $$;
+
+notify pgrst, 'reload schema';
+
+-- =====================================================================
+-- 16. SCHOOL HEALTH ROOM
+--     Each child's health notes (allergies, conditions, regular medicines) kept up to date by
+--     parents and staff; the health room logs visits and medicines given, and the parents are told.
+-- =====================================================================
+create table if not exists public.health_profiles (
+  student_id uuid primary key references public.profiles(id) on delete cascade,
+  allergies text[] not null default '{}',
+  conditions text,
+  medicines text,
+  emergency_contact text,
+  notes text,
+  updated_by uuid default auth.uid(),
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.health_visits (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  visited_at timestamptz not null default now(),
+  complaint text not null check (length(trim(complaint)) > 0),
+  temperature numeric check (temperature is null or temperature between 30 and 45),
+  outcome text not null default 'back_to_class' check (outcome in ('back_to_class', 'rested', 'sent_home', 'hospital')),
+  notes text,
+  recorded_by uuid default auth.uid(),
+  created_at timestamptz not null default now()
+);
+create index if not exists health_visits_student on public.health_visits (student_id, visited_at desc);
+create table if not exists public.medicine_given (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  visit_id uuid references public.health_visits(id) on delete cascade,
+  medicine text not null check (length(trim(medicine)) > 0),
+  dose text,
+  given_at timestamptz not null default now(),
+  given_by uuid default auth.uid()
+);
+
+-- Staff, the student and their parents; nobody else.
+create or replace function public.can_see_health(p_student uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_staff() or p_student = auth.uid() or public.is_guardian_of(p_student)
+$$;
+
+-- The allergy (if any) that a medicine or food name matches, ignoring case and plurals ("Peanut" / "peanuts").
+create or replace function public.matching_allergy(p_student uuid, p_names text[]) returns text
+language sql stable security definer set search_path = public as $$
+  select a from public.health_profiles h, unnest(h.allergies) a, unnest(p_names) n
+  where h.student_id = p_student and length(trim(a)) > 1 and length(trim(n)) > 1
+    and (lower(n) like '%' || lower(trim(a)) || '%' or lower(trim(a)) like '%' || lower(trim(n)) || '%')
+  limit 1
+$$;
+
+create or replace function public.before_health_profile() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  new.allergies := coalesce((select array_agg(distinct trim(a)) from unnest(new.allergies) a where length(trim(a)) > 0), '{}');
+  new.updated_by := auth.uid();
+  new.updated_at := now();
+  return new;
+end $$;
+drop trigger if exists health_profile_before on public.health_profiles;
+create trigger health_profile_before before insert or update on public.health_profiles for each row execute function public.before_health_profile();
+
+create or replace function public.before_health_visit() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return new; end if;
+  if not public.is_staff() then raise exception 'Health-room visits are recorded by staff.'; end if;
+  if not exists (select 1 from public.profiles where id = new.student_id and role = 'student') then raise exception 'Choose a student.'; end if;
+  new.recorded_by := auth.uid();
+  return new;
+end $$;
+drop trigger if exists health_visit_before on public.health_visits;
+create trigger health_visit_before before insert on public.health_visits for each row execute function public.before_health_visit();
+
+create or replace function public.after_health_visit() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare child text;
+begin
+  select full_name into child from public.profiles where id = new.student_id;
+  perform public.notify_guardians(new.student_id, format('%s visited the health room', child),
+    format('%s at %s: %s%s. %s', child, public.school_time(new.visited_at), new.complaint,
+      coalesce(format(' (temperature %s °C)', new.temperature), ''),
+      case new.outcome
+        when 'back_to_class' then 'They went back to class.'
+        when 'rested' then 'They rested and then went back to class.'
+        when 'sent_home' then 'They are being sent home — please collect them or call the school.'
+        else 'They were taken to hospital — please call the school now.' end), '/health');
+  return new;
+end $$;
+drop trigger if exists health_visit_after on public.health_visits;
+create trigger health_visit_after after insert on public.health_visits for each row execute function public.after_health_visit();
+
+create or replace function public.before_medicine_given() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare hit text; child text;
+begin
+  if new.visit_id is not null then
+    select student_id into new.student_id from public.health_visits where id = new.visit_id;
+  end if;
+  if auth.uid() is null then return new; end if;
+  if not public.is_staff() then raise exception 'Medicines are recorded by staff.'; end if;
+  new.given_by := auth.uid();
+  hit := public.matching_allergy(new.student_id, array[new.medicine]);
+  if hit is not null then
+    select full_name into child from public.profiles where id = new.student_id;
+    raise exception '% is allergic to %. Do not give %.', child, hit, new.medicine;
+  end if;
+  return new;
+end $$;
+drop trigger if exists medicine_given_before on public.medicine_given;
+create trigger medicine_given_before before insert on public.medicine_given for each row execute function public.before_medicine_given();
+
+create or replace function public.after_medicine_given() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare child text;
+begin
+  select full_name into child from public.profiles where id = new.student_id;
+  perform public.notify_guardians(new.student_id, format('Medicine given to %s', child),
+    format('%s was given %s%s at %s.', child, new.medicine, coalesce(' (' || nullif(trim(new.dose), '') || ')', ''), public.school_time(new.given_at)), '/health');
+  return new;
+end $$;
+drop trigger if exists medicine_given_after on public.medicine_given;
+create trigger medicine_given_after after insert on public.medicine_given for each row execute function public.after_medicine_given();
+
+do $$
+declare p record;
+begin
+  for p in select policyname, tablename from pg_policies where schemaname = 'public' and tablename in ('health_profiles', 'health_visits', 'medicine_given') loop
+    execute format('drop policy if exists %I on public.%I', p.policyname, p.tablename);
+  end loop;
+end $$;
+alter table public.health_profiles enable row level security;
+alter table public.health_visits enable row level security;
+alter table public.medicine_given enable row level security;
+create policy "health read" on public.health_profiles for select to authenticated using (public.can_see_health(student_id));
+-- Parents keep their child's notes up to date; staff can too.
+create policy "health write" on public.health_profiles for insert to authenticated with check (public.is_staff() or public.is_guardian_of(student_id));
+create policy "health update" on public.health_profiles for update to authenticated
+  using (public.is_staff() or public.is_guardian_of(student_id)) with check (public.is_staff() or public.is_guardian_of(student_id));
+create policy "visits read" on public.health_visits for select to authenticated using (public.can_see_health(student_id));
+create policy "visits create" on public.health_visits for insert to authenticated with check (public.is_staff());
+create policy "visits admin" on public.health_visits for delete to authenticated using (public.is_admin());
+create policy "medicine read" on public.medicine_given for select to authenticated using (public.can_see_health(student_id));
+create policy "medicine create" on public.medicine_given for insert to authenticated with check (public.is_staff());
+
+revoke execute on function public.matching_allergy(uuid, text[]) from public, anon, authenticated;
+revoke execute on function public.can_see_health(uuid) from public, anon;
+grant execute on function public.can_see_health(uuid) to authenticated;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['health_profiles', 'health_visits', 'medicine_given'] loop
+    execute format('drop trigger if exists audit_%s on public.%I', t, t);
+    execute format('create trigger audit_%s after insert or update or delete on public.%I for each row execute function public.write_audit()', t, t);
+  end loop;
+end $$;
+
+-- =====================================================================
+-- 17. CASHLESS CANTEEN
+--     Parents top up a child's wallet (through the same simulated gateway as fees); the canteen
+--     charges it by the child's ID card. Parents can set a daily limit and block items, and food
+--     the child is allergic to (section 16) is refused at the till.
+-- =====================================================================
+create table if not exists public.canteen_items (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique check (length(trim(name)) > 0),
+  price numeric not null check (price > 0),
+  category text not null default 'Snacks',
+  allergens text[] not null default '{}',
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.canteen_wallets (
+  student_id uuid primary key references public.profiles(id) on delete cascade,
+  balance numeric not null default 0 check (balance >= 0),
+  daily_limit numeric check (daily_limit is null or daily_limit > 0),
+  blocked_items uuid[] not null default '{}',
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.canteen_transactions (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null check (kind in ('topup', 'purchase')),
+  amount numeric not null check (amount > 0),
+  items jsonb not null default '[]'::jsonb,
+  reference text,
+  balance_after numeric not null,
+  by_user uuid default auth.uid(),
+  created_at timestamptz not null default now()
+);
+create index if not exists canteen_tx_student on public.canteen_transactions (student_id, created_at desc);
+insert into public.app_settings (key, value) values ('canteen_low_balance', '100'::jsonb) on conflict (key) do nothing;
+
+create or replace function public.school_today() returns date
+language sql stable security definer set search_path = public as $$
+  select (now() at time zone coalesce(public.setting('school_timezone') #>> '{}', 'UTC'))::date
+$$;
+
+create or replace function public.create_wallet_topup(p_student uuid, p_amount numeric, p_method text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare pi record;
+begin
+  if coalesce(public.setting('payments_mode') #>> '{}', 'off') = 'off' then raise exception 'Online payments are switched off.'; end if;
+  if not (p_student = auth.uid() or public.is_guardian_of(p_student) or public.is_admin()) then
+    raise exception 'You can only top up your own or your child''s wallet.';
+  end if;
+  if not exists (select 1 from public.profiles where id = p_student and role = 'student') then raise exception 'Only students have canteen wallets.'; end if;
+  if p_amount is null or p_amount < 10 then raise exception 'Top up at least 10.'; end if;
+  if p_amount > 5000 then raise exception 'You can top up at most 5000 at a time.'; end if;
+  insert into public.payment_intents (student_id, amount, method, gateway, purpose)
+  values (p_student, round(p_amount, 2), p_method, coalesce(public.setting('payments_mode') #>> '{}', 'mock'), 'wallet')
+  returning * into pi;
+  return jsonb_build_object('id', pi.id, 'gateway_ref', pi.gateway_ref, 'amount', pi.amount, 'mode', pi.gateway);
+end $$;
+
+-- The student a card (or a chosen id) belongs to, for the till.
+create or replace function public.canteen_student(p_card text, p_student uuid) returns uuid
+language plpgsql stable security definer set search_path = public as $$
+declare sid uuid;
+begin
+  if nullif(trim(coalesce(p_card, '')), '') is not null then
+    select user_id into sid from public.access_cards where card_uid = upper(regexp_replace(p_card, '[^0-9A-Za-z]', '', 'g')) and active;
+    if sid is null then raise exception 'Unknown card.'; end if;
+  else
+    sid := p_student;
+  end if;
+  if not exists (select 1 from public.profiles where id = sid and role = 'student' and active) then raise exception 'That is not a student''s card.'; end if;
+  return sid;
+end $$;
+
+create or replace function public.canteen_spent_today(p_student uuid) returns numeric
+language sql stable security definer set search_path = public as $$
+  select coalesce(sum(amount), 0) from public.canteen_transactions
+  where student_id = p_student and kind = 'purchase'
+    and (created_at at time zone coalesce(public.setting('school_timezone') #>> '{}', 'UTC'))::date = public.school_today()
+$$;
+
+create or replace function public.canteen_lookup(p_card text, p_student uuid default null) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare sid uuid; w record;
+begin
+  if not public.is_staff() then raise exception 'The canteen till is for staff.'; end if;
+  sid := public.canteen_student(p_card, p_student);
+  select * into w from public.canteen_wallets where student_id = sid;
+  return jsonb_build_object('id', sid, 'name', (select full_name from public.profiles where id = sid),
+    'balance', coalesce(w.balance, 0), 'daily_limit', w.daily_limit, 'spent_today', public.canteen_spent_today(sid),
+    'blocked', coalesce((select jsonb_agg(name order by name) from public.canteen_items where id = any(coalesce(w.blocked_items, '{}'))), '[]'::jsonb),
+    'allergies', coalesce((select to_jsonb(allergies) from public.health_profiles where student_id = sid), '[]'::jsonb));
+end $$;
+
+-- p_items: [{"id": <item id>, "qty": 2}, ...]. All or nothing: any refusal charges nothing.
+create or replace function public.canteen_charge(p_card text, p_student uuid, p_items jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare sid uuid; child text; w record; x jsonb; it record; q int; total numeric := 0; lines jsonb := '[]'::jsonb;
+        spent numeric; hit text; nb numeric; low numeric;
+begin
+  if not public.is_staff() then raise exception 'The canteen till is for staff.'; end if;
+  sid := public.canteen_student(p_card, p_student);
+  select full_name into child from public.profiles where id = sid;
+  if jsonb_typeof(p_items) is distinct from 'array' or jsonb_array_length(p_items) = 0 then raise exception 'Choose something to buy.'; end if;
+  insert into public.canteen_wallets (student_id) values (sid) on conflict do nothing;
+  select * into w from public.canteen_wallets where student_id = sid for update;
+  for x in select value from jsonb_array_elements(p_items) loop
+    select * into it from public.canteen_items where id = (x ->> 'id')::uuid and active;
+    if it.id is null then raise exception 'An item is no longer on the menu.'; end if;
+    q := greatest(1, least(20, coalesce((x ->> 'qty')::int, 1)));
+    if it.id = any(w.blocked_items) then raise exception '% is blocked for % by a parent.', it.name, child; end if;
+    hit := public.matching_allergy(sid, it.allergens || it.name);
+    if hit is not null then raise exception 'Not allowed: % is allergic to % (%).', child, hit, it.name; end if;
+    total := total + it.price * q;
+    lines := lines || jsonb_build_object('name', it.name, 'qty', q, 'price', it.price);
+  end loop;
+  if w.daily_limit is not null then
+    spent := public.canteen_spent_today(sid);
+    if spent + total > w.daily_limit then
+      raise exception 'Over the daily limit of % set by a parent (% left today).', w.daily_limit, greatest(w.daily_limit - spent, 0);
+    end if;
+  end if;
+  if w.balance < total then raise exception 'Not enough in the wallet: % needed, % left.', total, w.balance; end if;
+  update public.canteen_wallets set balance = balance - total, updated_at = now() where student_id = sid returning balance into nb;
+  insert into public.canteen_transactions (student_id, kind, amount, items, balance_after) values (sid, 'purchase', total, lines, nb);
+  low := coalesce((public.setting('canteen_low_balance') #>> '{}')::numeric, 0);
+  if nb < low and w.balance >= low then
+    perform public.notify_guardians(sid, format('%s''s canteen wallet is running low', child),
+      format('%s left in the wallet. Top it up from the Canteen page.', to_char(nb, 'FM999G999G990D00')), '/canteen');
+  end if;
+  return jsonb_build_object('name', child, 'total', total, 'balance', nb, 'items', lines);
+end $$;
+
+-- Parents (or administrators) set the daily limit and the blocked items.
+create or replace function public.set_wallet_controls(p_student uuid, p_daily_limit numeric, p_blocked uuid[]) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not (public.is_guardian_of(p_student) or public.is_admin()) then raise exception 'Only a parent can change these.'; end if;
+  if p_daily_limit is not null and p_daily_limit <= 0 then raise exception 'The daily limit must be more than 0.'; end if;
+  insert into public.canteen_wallets (student_id) values (p_student) on conflict do nothing;
+  update public.canteen_wallets set daily_limit = p_daily_limit,
+    blocked_items = coalesce((select array_agg(id) from public.canteen_items where id = any(coalesce(p_blocked, '{}'))), '{}'), updated_at = now()
+  where student_id = p_student;
+end $$;
+
+do $$
+declare p record;
+begin
+  for p in select policyname, tablename from pg_policies where schemaname = 'public' and tablename in ('canteen_items', 'canteen_wallets', 'canteen_transactions') loop
+    execute format('drop policy if exists %I on public.%I', p.policyname, p.tablename);
+  end loop;
+end $$;
+alter table public.canteen_items enable row level security;
+alter table public.canteen_wallets enable row level security;
+alter table public.canteen_transactions enable row level security;
+create policy "menu read" on public.canteen_items for select to authenticated using (public.is_member());
+create policy "menu admin" on public.canteen_items for all to authenticated using (public.is_admin()) with check (public.is_admin());
+-- Wallets and their history change only through the functions above.
+create policy "wallet read" on public.canteen_wallets for select to authenticated
+  using (public.is_staff() or student_id = auth.uid() or public.is_guardian_of(student_id));
+create policy "wallet history read" on public.canteen_transactions for select to authenticated
+  using (public.is_staff() or student_id = auth.uid() or public.is_guardian_of(student_id));
+
+revoke execute on function public.canteen_student(text, uuid), public.canteen_spent_today(uuid) from public, anon, authenticated;
+revoke execute on function public.create_wallet_topup(uuid, numeric, text), public.canteen_lookup(text, uuid), public.canteen_charge(text, uuid, jsonb),
+  public.set_wallet_controls(uuid, numeric, uuid[]), public.school_today() from public, anon;
+grant execute on function public.create_wallet_topup(uuid, numeric, text), public.canteen_lookup(text, uuid), public.canteen_charge(text, uuid, jsonb),
+  public.set_wallet_controls(uuid, numeric, uuid[]), public.school_today() to authenticated;
+
+do $$
+begin
+  execute 'drop trigger if exists audit_canteen_items on public.canteen_items';
+  execute 'create trigger audit_canteen_items after insert or update or delete on public.canteen_items for each row execute function public.write_audit()';
+end $$;
+
+-- =====================================================================
+-- 18. HOMEWORK PLANNER
+--     Assignments can be set for one class. Students and parents see the week's homework in one
+--     place; teachers see how much is already due on each day before setting more; students are
+--     reminded the day before, and parents are told about homework that was never handed in.
+-- =====================================================================
+alter table public.course_materials add column if not exists class_id uuid references public.classes(id) on delete set null;
+insert into public.app_settings (key, value) values ('homework_daily_limit', '3'::jsonb) on conflict (key) do nothing;
+
+create or replace function public.before_course_material_class() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.class_id is not null and auth.uid() is not null and not public.teaches(new.class_id) then
+    raise exception 'You can only set homework for your own classes.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists course_material_class on public.course_materials;
+create trigger course_material_class before insert or update of class_id on public.course_materials for each row execute function public.before_course_material_class();
+
+-- Assignments a student has due between two days, and whether each has been handed in.
+create or replace function public.homework_for(p_student uuid, p_from date, p_to date)
+returns table (id uuid, title text, description text, due_date date, class_name text, submitted boolean)
+language sql stable security definer set search_path = public as $$
+  select m.id, m.title, m.description, m.due_date, c.name,
+         exists (select 1 from public.assignment_submissions s where s.material_id = m.id and s.student_id = p_student)
+  from public.course_materials m left join public.classes c on c.id = m.class_id
+  where (p_student = auth.uid() or public.is_guardian_of(p_student) or public.is_staff())
+    and m.file_type = 'Assignment' and m.due_date between p_from and p_to and p_to - p_from <= 62
+    and (m.class_id is null or exists (select 1 from public.class_enrollments e where e.class_id = m.class_id and e.student_id = p_student))
+  order by m.due_date, m.title
+$$;
+
+-- For each day: the most homework any one student in the class already has due that day.
+create or replace function public.homework_load(p_class uuid, p_from date, p_to date) returns table (day date, heaviest int)
+language sql stable security definer set search_path = public as $$
+  with kids as (select student_id from public.class_enrollments where class_id = p_class),
+  due as (
+    select m.due_date as d, k.student_id, count(*) as n
+    from public.course_materials m cross join kids k
+    where m.file_type = 'Assignment' and m.due_date between p_from and p_to
+      and (m.class_id is null or exists (select 1 from public.class_enrollments e where e.class_id = m.class_id and e.student_id = k.student_id))
+    group by 1, 2)
+  select g::date, coalesce((select max(n) from due where due.d = g::date), 0)::int
+  from generate_series(p_from, p_to, interval '1 day') g
+  where public.is_staff() and p_to - p_from <= 62
+$$;
+
+create table if not exists public.homework_reminders (
+  material_id uuid not null references public.course_materials(id) on delete cascade,
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null check (kind in ('due', 'missed')),
+  sent_at timestamptz not null default now(),
+  primary key (material_id, student_id, kind)
+);
+alter table public.homework_reminders enable row level security;
+revoke all on public.homework_reminders from anon, authenticated;
+
+-- Runs every afternoon: "due tomorrow" to students, "missing homework" (last 7 days) to parents. Each only once.
+create or replace function public.remind_homework() returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0; today date := public.school_today();
+begin
+  if auth.uid() is not null and not public.is_admin() then raise exception 'Administrators only.'; end if;
+  for r in
+    select p.id, array_agg(m.id) as ids, string_agg(m.title, ', ' order by m.title) as titles
+    from public.profiles p join public.course_materials m on m.file_type = 'Assignment'
+    where p.role = 'student' and p.active and m.due_date = today + 1
+      and (m.class_id is null or exists (select 1 from public.class_enrollments e where e.class_id = m.class_id and e.student_id = p.id))
+      and not exists (select 1 from public.assignment_submissions s where s.material_id = m.id and s.student_id = p.id)
+      and not exists (select 1 from public.homework_reminders h where h.material_id = m.id and h.student_id = p.id and h.kind = 'due')
+    group by p.id
+  loop
+    insert into public.notifications (user_id, title, body, link) values (r.id, 'Homework due tomorrow', r.titles, '/homework');
+    insert into public.homework_reminders (material_id, student_id, kind) select unnest(r.ids), r.id, 'due';
+    n := n + 1;
+  end loop;
+  for r in
+    select p.id, p.full_name, array_agg(m.id) as ids, string_agg(m.title, ', ' order by m.title) as titles
+    from public.profiles p join public.course_materials m on m.file_type = 'Assignment'
+    where p.role = 'student' and p.active and m.due_date < today and m.due_date >= today - 7
+      and (m.class_id is null or exists (select 1 from public.class_enrollments e where e.class_id = m.class_id and e.student_id = p.id))
+      and not exists (select 1 from public.assignment_submissions s where s.material_id = m.id and s.student_id = p.id)
+      and not exists (select 1 from public.homework_reminders h where h.material_id = m.id and h.student_id = p.id and h.kind = 'missed')
+    group by p.id, p.full_name
+  loop
+    perform public.notify_guardians(r.id, format('%s has missing homework', r.full_name), r.titles, '/homework');
+    insert into public.homework_reminders (material_id, student_id, kind) select unnest(r.ids), r.id, 'missed';
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+revoke execute on function public.homework_for(uuid, date, date), public.homework_load(uuid, date, date), public.remind_homework() from public, anon;
+grant execute on function public.homework_for(uuid, date, date), public.homework_load(uuid, date, date), public.remind_homework() to authenticated;
+
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.unschedule(jobid) from cron.job where jobname = 'erp-homework-reminders';
+    -- 10:30 UTC is 16:00 in India, after school.
+    perform cron.schedule('erp-homework-reminders', '30 10 * * *', 'select public.remind_homework()');
+  end if;
 end $$;
 
 notify pgrst, 'reload schema';

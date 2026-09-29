@@ -642,6 +642,189 @@ test("gate: a parent names who collects their child; a visitor is expected; the 
   expect(hostTold.length, "host told about the visitor").toBe(1);
 });
 
+test("health room: a parent notes an allergy; a visit is recorded; an unsafe medicine is refused; the parent is told", async ({ page }) => {
+  await as(page, parent);
+  await page.goto("/health");
+  await page.getByRole("button", { name: "Add notes" }).click();
+  await modal(page).getByLabel("Allergies (separate with commas)").fill("Peanuts, Penicillin");
+  await modal(page).getByLabel("Conditions").fill("Mild asthma");
+  await modal(page).getByLabel("Emergency contact").fill("Aunt +919800000002");
+  await modal(page).getByRole("button", { name: "Save notes" }).click();
+  await expectToast(page, "Health notes saved.");
+  await expect(page.getByTestId("allergies")).toContainText("Peanuts");
+  await logout(page);
+
+  await as(page, teacher);
+  await page.goto("/health");
+  await page.getByRole("button", { name: "Record a visit" }).click();
+  await modal(page).getByLabel("Student").selectOption({ label: student.name });
+  await expect(modal(page).getByRole("alert")).toContainText("Allergic to: Peanuts, Penicillin");
+  await modal(page).getByLabel("What's wrong").fill("Headache");
+  await modal(page).getByLabel("Temperature (°C, optional)").fill("38.4");
+  await modal(page).getByLabel("Outcome").selectOption("sent_home");
+  await modal(page).getByLabel("Medicine given (optional)").fill("Paracetamol");
+  await modal(page).getByLabel("Dose").fill("500 mg");
+  await modal(page).getByRole("button", { name: "Save visit" }).click();
+  await expectToast(page, "Visit recorded. The parents have been told.");
+  const visit = page.locator("div").filter({ hasText: student.name }).filter({ hasText: "Headache" }).last();
+  await expect(visit).toContainText("Sent home");
+  await expect(visit).toContainText("Paracetamol · 500 mg");
+
+  // A medicine the child is allergic to is refused by the server; the visit itself is still kept.
+  await page.getByRole("button", { name: "Record a visit" }).click();
+  await modal(page).getByLabel("Student").selectOption({ label: student.name });
+  await modal(page).getByLabel("What's wrong").fill("Sore throat");
+  await modal(page).getByLabel("Medicine given (optional)").fill("Penicillin V");
+  await modal(page).getByRole("button", { name: "Save visit" }).click();
+  await expectToast(page, /the medicine was NOT given: .*allergic to Penicillin/);
+  await logout(page);
+
+  await as(page, parent);
+  await page.goto("/health");
+  await tab(page, /^Visits$/);
+  await expect(page.getByText("Headache")).toBeVisible();
+  await expect(page.getByText("Sore throat")).toBeVisible();
+  const told = await (await api(parent)).get("notifications?title=like.*visited%20the%20health%20room&select=body");
+  expect(told.length, "parent told about both visits").toBe(2);
+  expect(told.map((n) => String(n.body)).join(" ")).toContain("sent home");
+  const med = await (await api(parent)).get("notifications?title=like.Medicine%20given%20to*&select=body");
+  expect(med.length, "only the safe medicine was given").toBe(1);
+  expect(String(med[0].body)).toContain("Paracetamol (500 mg)");
+  await logout(page);
+
+  // The student sees their own notes but can't change them.
+  await as(page, student);
+  await page.goto("/health");
+  await expect(page.getByTestId("allergies")).toContainText("Penicillin");
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+});
+
+test("canteen: a parent tops up and sets limits; the till refuses allergy food, blocked items and over-limit spending", async ({ page }) => {
+  const SANDWICH = L("Sandwich"), CHIKKI = L("Chikki"), COLA = L("Cola");
+  await as(page, owner);
+  await page.goto("/canteen");
+  await tab(page, "Menu");
+  for (const [name, price, category, allergens] of [[SANDWICH, "40", "Meals", ""], [CHIKKI, "20", "Snacks", "peanuts"], [COLA, "30", "Drinks", ""]]) {
+    await page.getByRole("button", { name: "Add item" }).click();
+    await modal(page).getByLabel("Name").fill(name);
+    await modal(page).getByLabel("Price").fill(price);
+    await modal(page).getByLabel("Category").fill(category);
+    await modal(page).getByLabel("Contains (allergens, separate with commas)").fill(allergens);
+    await modal(page).getByRole("button", { name: "Add to menu" }).click();
+    await expectToast(page, "Added to the menu.");
+  }
+  await expect(row(page, CHIKKI)).toContainText("peanuts");
+  await logout(page);
+
+  await as(page, parent);
+  await page.goto("/canteen");
+  await expect(page.getByTestId("wallet-balance")).toHaveText("$0.00");
+  await page.getByRole("button", { name: "Top up" }).click();
+  await expect(modal(page).getByText(/Test mode: this is a simulated payment gateway/)).toBeVisible();
+  await modal(page).getByLabel("Amount").fill("200");
+  await modal(page).getByLabel("UPI ID").fill("parent@okaxis");
+  await modal(page).getByRole("button", { name: "Pay $200.00" }).click();
+  await modal(page).getByRole("button", { name: "Approve" }).click();
+  await expect(modal(page).getByText("Payment successful")).toBeVisible();
+  await modal(page).getByRole("button", { name: "Done" }).click();
+  await expect(page.getByTestId("wallet-balance")).toHaveText("$200.00");
+  await page.getByLabel("Daily spending limit (empty for none)").fill("150");
+  await page.getByLabel(COLA).check();
+  await page.getByRole("button", { name: "Save limits" }).click();
+  await expectToast(page, "Saved.");
+  await logout(page);
+
+  await as(page, teacher);
+  await page.goto("/canteen");
+  if (TODAY_IS_SCHOOL_DAY) {
+    // The student's ID card (assigned in the check-in test) held to the phone / typed by a USB reader.
+    await page.getByLabel("Card number").fill(CARD.toLowerCase());
+    await page.getByRole("button", { name: "Find", exact: true }).click();
+  } else {
+    await page.getByLabel("Or choose a student").selectOption({ label: student.name });
+  }
+  const buyer = page.getByRole("status").filter({ hasText: student.name });
+  await expect(buyer).toContainText("$200.00");
+  await expect(buyer).toContainText("Allergic to: Peanuts");
+  await expect(buyer).toContainText(`Blocked by a parent: ${COLA}`);
+  const add = (name: string) => page.getByRole("button", { name }).first().click();
+  const charge = page.getByRole("button", { name: `Charge ${student.name}` });
+
+  await add(CHIKKI);
+  await add(SANDWICH);
+  await charge.click();
+  await expectToast(page, new RegExp(`Not allowed: .* allergic to Peanuts \\(${CHIKKI}\\)`));
+  await page.getByRole("button", { name: "Clear the order" }).click();
+  await add(COLA);
+  await charge.click();
+  await expectToast(page, `${COLA} is blocked for ${student.name} by a parent.`);
+  await page.getByRole("button", { name: "Clear the order" }).click();
+  await add(SANDWICH);
+  await page.getByRole("button", { name: "One more" }).click();
+  await charge.click();
+  await expectToast(page, `Charged $80.00. ${student.name} has $120.00 left.`);
+
+  // Another 80 today would go over the parent's 150 limit.
+  await page.getByLabel("Or choose a student").selectOption({ label: student.name });
+  await expect(buyer).toContainText("spent today $80.00");
+  await add(SANDWICH);
+  await page.getByRole("button", { name: "One more" }).click();
+  await charge.click();
+  await expectToast(page, /Over the daily limit of 150/);
+  await logout(page);
+
+  await as(page, student);
+  await page.goto("/canteen");
+  await expect(page.getByTestId("wallet-balance")).toHaveText("$120.00");
+  await expect(page.getByText(`2× ${SANDWICH}`)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save limits" })).toHaveCount(0);
+});
+
+test("homework: a teacher sees the day is busy before setting more; the student and parent see the week; reminders go out", async ({ page }) => {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const DUE = iso(tomorrow);
+  const W1 = L("Worksheet"), W2 = L("Lab report");
+  await as(page, teacher);
+  await page.goto("/e-learning");
+  for (const [title, first] of [[W1, true], [W2, false]] as const) {
+    await page.getByRole("button", { name: "Create Module" }).click();
+    await modal(page).getByLabel("Resource Title").fill(title);
+    await modal(page).getByLabel("Type").selectOption("Assignment");
+    await modal(page).getByLabel("Class", { exact: true }).selectOption({ label: CLASS });
+    await modal(page).getByLabel("Due Date").fill(DUE);
+    const note = modal(page).getByRole("status");
+    if (first) await expect(note).toHaveText(/Nothing else is due that day|already have \d+ piece/);
+    else await expect(note).toContainText(/already have [1-9]\d* piece/);
+    await modal(page).getByRole("button", { name: "Publish" }).click();
+    await expectToast(page, "Resource published.");
+  }
+  await page.goto("/homework");
+  await page.getByLabel("Class", { exact: true }).selectOption({ label: CLASS });
+  if (tomorrow.getDay() === 1) await page.getByRole("button", { name: "Next week" }).click();
+  await expect(page.getByTestId(`load-${DUE}`)).toContainText(/[2-9]/);
+  await logout(page);
+
+  for (const u of [student, parent]) {
+    await as(page, u);
+    await page.goto("/homework");
+    if (tomorrow.getDay() === 1) await page.getByRole("button", { name: "Next week" }).click();
+    for (const title of [W1, W2]) {
+      const item = page.getByTestId("homework-item").filter({ hasText: title });
+      await expect(item).toContainText(CLASS);
+      await expect(item).toContainText("To do");
+    }
+    await logout(page);
+  }
+
+  const told = await (await api(student)).get(`notifications?title=eq.${encodeURIComponent(`New assignment: ${W1}`)}&select=id`);
+  expect(told.length, "the class is told about new homework").toBe(1);
+  const sent = await (await api(owner)).rpc("remind_homework", {});
+  expect(sent.ok, JSON.stringify(sent.data)).toBe(true);
+  const due = await (await api(student)).get("notifications?title=eq.Homework%20due%20tomorrow&select=body");
+  expect(due.map((n) => String(n.body)).join(" ")).toContain(W1);
+});
+
 test("AI assistant: opens from the sidebar, offers questions for the role, and answers or says it isn't set up", async ({ page }) => {
   await as(page, student);
   await page.getByRole("button", { name: "Ask AI" }).first().click();

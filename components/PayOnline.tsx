@@ -22,12 +22,14 @@ const luhn = (n: string) =>
 
 // Online fee payment. While the school's payments mode is "mock" this is a simulated gateway:
 // the steps look like a real checkout, the payment is posted to the ledger, but no money moves.
-export default function PayOnline({ studentId, studentName, balance, onPaid, onClose }: {
-  studentId: string; studentName: string; balance: number; onPaid: () => void; onClose: () => void;
+// With purpose "wallet" the same checkout tops up the canteen wallet instead; `balance` is then the wallet balance.
+export default function PayOnline({ studentId, studentName, balance, onPaid, onClose, purpose = "fees" }: {
+  studentId: string; studentName: string; balance: number; onPaid: () => void; onClose: () => void; purpose?: "fees" | "wallet";
 }) {
   const t = useT();
+  const wallet = purpose === "wallet";
   const [method, setMethod] = useState<Method>("upi");
-  const [amount, setAmount] = useState(balance.toFixed(2));
+  const [amount, setAmount] = useState(wallet ? "200" : balance.toFixed(2));
   const [vpa, setVpa] = useState("");
   const [card, setCard] = useState({ number: "", expiry: "", cvv: "", name: "" });
   const [bank, setBank] = useState(BANKS[0]);
@@ -39,7 +41,7 @@ export default function PayOnline({ studentId, studentName, balance, onPaid, onC
     e.preventDefault();
     const amt = Number(amount);
     if (!(amt > 0)) return toast(t("Enter an amount to pay."), "error");
-    if (amt > balance + 0.001) return toast(t("You can pay at most {amount}.", { amount: money(balance) }), "error");
+    if (!wallet && amt > balance + 0.001) return toast(t("You can pay at most {amount}.", { amount: money(balance) }), "error");
     if (method === "upi" && !/^[\w.-]{2,}@[a-zA-Z]{2,}$/.test(vpa.trim())) return toast(t("Enter a UPI ID like name@bank."), "error");
     if (method === "card") {
       const num = card.number.replace(/\D/g, "");
@@ -49,7 +51,9 @@ export default function PayOnline({ studentId, studentName, balance, onPaid, onC
       if (!/^\d{3,4}$/.test(card.cvv)) return toast(t("Enter the 3-digit security code."), "error");
     }
     setStep({ kind: "processing" });
-    const { data, error } = await supabase.rpc("create_payment_intent", { p_student: studentId, p_amount: amt, p_method: method });
+    const { data, error } = wallet
+      ? await supabase.rpc("create_wallet_topup", { p_student: studentId, p_amount: amt, p_method: method })
+      : await supabase.rpc("create_payment_intent", { p_student: studentId, p_amount: amt, p_method: method });
     if (error) {
       setStep({ kind: "form" });
       return toast(errorMessage(error), "error");
@@ -82,7 +86,7 @@ export default function PayOnline({ studentId, studentName, balance, onPaid, onC
         <tr><th>Method</th><td>${escapeHtml(method === "upi" ? `UPI (${vpa})` : method === "card" ? `Card ${detail}` : `Net banking — ${bank}`)}</td></tr>
         <tr><th>Reference</th><td>${escapeHtml(s.reference ?? "")}</td></tr>
         <tr><th>Date</th><td>${new Date().toLocaleString()}</td></tr>
-        <tr><th>Balance after payment</th><td>${money(s.balance)}</td></tr>
+        <tr><th>${wallet ? "Canteen wallet after top-up" : "Balance after payment"}</th><td>${money(s.balance)}</td></tr>
       </tbody></table>`);
 
   const tabs: { id: Method; label: string; icon: typeof CreditCard }[] = [
@@ -92,7 +96,7 @@ export default function PayOnline({ studentId, studentName, balance, onPaid, onC
   ];
 
   return (
-    <Modal title="Pay Fees Online" icon={ShieldCheck} onClose={onClose}>
+    <Modal title={wallet ? "Top Up Canteen Wallet" : "Pay Fees Online"} icon={ShieldCheck} onClose={onClose}>
       <div className="mb-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold flex items-start gap-2">
         <FlaskConical size={16} className="shrink-0" />
         <span>{t("Test mode: this is a simulated payment gateway. No real money moves, but the payment is recorded on the account.")}</span>
@@ -100,7 +104,7 @@ export default function PayOnline({ studentId, studentName, balance, onPaid, onC
 
       {step.kind === "form" && (
         <form onSubmit={start} className="space-y-4">
-          <p className="text-sm text-slate-600">{t("Paying for")} <b>{studentName}</b> — {t("balance due")} <b>{money(balance)}</b></p>
+          <p className="text-sm text-slate-600">{t("Paying for")} <b>{studentName}</b> — {wallet ? t("wallet balance") : t("balance due")} <b>{money(balance)}</b></p>
           <Field label="Amount">
             <input className={inputClass} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
           </Field>
@@ -173,7 +177,7 @@ export default function PayOnline({ studentId, studentName, balance, onPaid, onC
           {step.ok ? (
             <>
               <p className="text-sm text-slate-600">{money(step.amount)} · {t("Reference")} <span className="font-mono">{step.reference}</span></p>
-              <p className="text-sm text-slate-600">{t("New balance")}: <b>{money(step.balance)}</b></p>
+              <p className="text-sm text-slate-600">{wallet ? t("Wallet balance") : t("New balance")}: <b>{money(step.balance)}</b></p>
               <button onClick={() => receipt(step)} className="inline-flex items-center gap-2 text-sm font-bold text-indigo-600 bg-indigo-50 px-4 py-2 rounded-xl"><Printer size={16} /> {t("Receipt")}</button>
             </>
           ) : (

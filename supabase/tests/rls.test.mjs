@@ -1101,6 +1101,145 @@ check("user clears the flag after changing password", !r.error && r.rows.length 
   check("nobody changes a pass directly", r.rows.length === 0, r.error ?? "");
 }
 
+// --- Section 16: school health room ---
+{
+  const pa = "00000000-0000-0000-0000-000000000095"; // parent of alice (section 13)
+  let r = await as(pa, `insert into public.health_profiles (student_id, allergies, conditions) values ($1, array[' Peanuts ', 'Penicillin', ''], 'Mild asthma') returning allergies`, [ids.alice]);
+  check("a parent keeps their child's health notes", JSON.stringify(r.rows[0]?.allergies?.slice().sort()) === '["Peanuts","Penicillin"]', r.error ?? JSON.stringify(r.rows));
+  r = await as(pa, `insert into public.health_profiles (student_id, allergies) values ($1, array['x'])`, [ids.bob]);
+  check("a parent can't write another child's health notes", !!r.error, r.error ?? "accepted!");
+  r = await as(ids.alice, `update public.health_profiles set allergies = '{}' where student_id = $1 returning student_id`, [ids.alice]);
+  check("students can't change their own health notes", r.rows.length === 0, r.error ?? "");
+  check("the student reads their own notes", (await count(ids.alice, `select * from public.health_profiles`)) === 1);
+  check("other students can't read them", (await count(ids.bob, `select * from public.health_profiles`)) === 0);
+  check("staff read them", (await count(ids.teacher, `select * from public.health_profiles where student_id = '${ids.alice}'`)) === 1);
+
+  r = await as(ids.alice, `insert into public.health_visits (student_id, complaint) values ($1, 'Headache')`, [ids.bob]);
+  check("students can't record health-room visits", !!r.error, r.error ?? "accepted!");
+  r = await as(ids.teacher, `insert into public.health_visits (student_id, complaint, temperature, outcome, recorded_by) values ($1, 'Headache', 38.2, 'sent_home', $2) returning id, recorded_by`, [ids.alice, ids.admin]);
+  const visit = r.rows[0];
+  check("staff record a visit (as themselves)", visit?.recorded_by === ids.teacher, r.error ?? JSON.stringify(r.rows));
+  r = await as(pa, `select body from public.notifications where title like '% visited the health room'`);
+  check("the parent is told about the visit and the outcome", r.rows.length === 1 && /38\.2/.test(r.rows[0].body) && /sent home/.test(r.rows[0].body), JSON.stringify(r.rows));
+  check("other students don't see the visit", (await count(ids.bob, `select * from public.health_visits`)) === 0);
+  check("the parent sees the visit", (await count(pa, `select * from public.health_visits`)) === 1);
+
+  r = await as(ids.teacher, `insert into public.medicine_given (visit_id, medicine, dose) values ($1, 'Penicillin V', '250 mg')`, [visit?.id]);
+  check("a medicine the child is allergic to is refused", /allergic to Penicillin/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.teacher, `insert into public.medicine_given (visit_id, student_id, medicine, dose) values ($1, $2, 'Paracetamol', '500 mg') returning student_id`, [visit?.id, ids.bob]);
+  check("a medicine is recorded against the visit's student", r.rows[0]?.student_id === ids.alice, r.error ?? JSON.stringify(r.rows));
+  check("the parent is told which medicine was given", (await count(pa, `select * from public.notifications where title like 'Medicine given to %' and body like '%Paracetamol (500 mg)%'`)) === 1);
+  r = await as(pa, `insert into public.medicine_given (student_id, medicine) values ($1, 'Sweets')`, [ids.alice]);
+  check("parents can't record medicines", !!r.error, r.error ?? "accepted!");
+  r = await as(ids.teacher, `delete from public.health_visits where id = $1 returning id`, [visit?.id]);
+  check("teachers can't delete visit records", r.rows.length === 0, r.error ?? "");
+}
+
+// --- Section 17: cashless canteen ---
+{
+  const q1 = async (sql, params = []) => (await db.query(sql, params)).rows;
+  const pa = "00000000-0000-0000-0000-000000000095";
+  await q1(`insert into public.access_cards (card_uid, user_id) values ('CAFE0001', $1), ('CAFE0002', $2) on conflict do nothing`, [ids.alice, ids.teacher]);
+  let r = await as(ids.teacher, `insert into public.canteen_items (name, price) values ('Samosa', 15)`);
+  check("only administrators change the menu", !!r.error, r.error ?? "accepted!");
+  r = await as(ids.admin, `insert into public.canteen_items (name, price, category, allergens) values
+    ('Veg Sandwich', 40, 'Meals', '{}'), ('Peanut Chikki', 20, 'Snacks', array['peanuts']), ('Cola', 30, 'Drinks', '{}'), ('Juice', 25, 'Drinks', '{}') returning id, name`);
+  const item = Object.fromEntries(r.rows.map((x) => [x.name, x.id]));
+  check("administrators add menu items", r.rows.length === 4, r.error ?? "");
+  check("everyone reads the menu", (await count(ids.alice, `select * from public.canteen_items`)) === 4);
+
+  r = await as(ids.alice, `insert into public.canteen_wallets (student_id, balance) values ($1, 1000)`, [ids.alice]);
+  check("nobody gives themselves wallet money directly", !!r.error, r.error ?? "accepted!");
+  r = await as(pa, `select public.create_wallet_topup($1, 5, 'upi') as v`, [ids.alice]);
+  check("tiny top-ups are refused", /at least 10/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(pa, `select public.create_wallet_topup($1, 100, 'upi') as v`, [ids.bob]);
+  check("a parent can't top up another child's wallet", /your child/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(pa, `select public.create_wallet_topup($1, 200, 'upi') as v`, [ids.alice]);
+  const intent = r.rows[0]?.v;
+  check("a parent starts a wallet top-up", !!intent?.id, r.error ?? "");
+  const feesBefore = (await q1(`select public.balance_of($1) as b`, [ids.alice]))[0].b;
+  r = await as(pa, `select public.mock_gateway_complete($1, true, 'parent@okbank') as v`, [intent?.id]);
+  check("the top-up lands in the wallet, not the fee account", r.rows[0]?.v?.ok === true && Number(r.rows[0].v.balance) === 200
+    && Number((await q1(`select public.balance_of($1) as b`, [ids.alice]))[0].b) === Number(feesBefore), r.error ?? JSON.stringify(r.rows));
+  check("the student and parent get a receipt", (await count(ids.alice, `select * from public.notifications where title = 'Canteen wallet topped up'`)) === 1
+    && (await count(pa, `select * from public.notifications where title = 'Canteen wallet topped up'`)) === 1);
+  r = await as(pa, `select public.mock_gateway_complete($1, true, 'again')`, [intent?.id]);
+  check("a top-up can't be completed twice", /already completed/.test(r.error ?? ""), r.error ?? "accepted!");
+
+  r = await as(ids.alice, `select public.canteen_charge('CAFE0001', null, $1)`, [JSON.stringify([{ id: item.Cola }])]);
+  check("students can't use the till", /for staff/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.teacher, `select public.canteen_lookup('ca-fe-00-01') as v`);
+  check("the till looks a card up with balance and allergies", !!r.rows[0]?.v?.name && Number(r.rows[0].v.balance) === 200 && r.rows[0].v.allergies.includes("Peanuts"), r.error ?? JSON.stringify(r.rows));
+  r = await as(ids.teacher, `select public.canteen_lookup('CAFE0002')`);
+  check("a staff card is not a wallet", /not a student/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.teacher, `select public.canteen_charge('CAFE0001', null, $1)`, [JSON.stringify([{ id: item.Cola }, { id: item["Peanut Chikki"] }])]);
+  check("food the child is allergic to is refused, and nothing is charged", /allergic to Peanuts/.test(r.error ?? "")
+    && Number((await q1(`select balance from public.canteen_wallets where student_id = $1`, [ids.alice]))[0].balance) === 200, r.error ?? "accepted!");
+  r = await as(ids.teacher, `select public.canteen_charge('CAFE0001', null, $1) as v`, [JSON.stringify([{ id: item["Veg Sandwich"], qty: 2 }, { id: item.Juice }])]);
+  check("the till charges the wallet", Number(r.rows[0]?.v?.total) === 105 && Number(r.rows[0]?.v?.balance) === 95, r.error ?? JSON.stringify(r.rows));
+  check("the parent is told the wallet is running low", (await count(pa, `select * from public.notifications where title like '%''s canteen wallet is running low'`)) === 1);
+
+  r = await as(ids.alice, `select public.set_wallet_controls($1, 1, '{}')`, [ids.alice]);
+  check("students can't change their own limits", /Only a parent/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(pa, `select public.set_wallet_controls($1, 120, array[$2]::uuid[])`, [ids.alice, item.Cola]);
+  check("a parent sets a daily limit and blocks an item", !r.error, r.error ?? "");
+  r = await as(ids.teacher, `select public.canteen_charge(null, $1, $2)`, [ids.alice, JSON.stringify([{ id: item.Cola }])]);
+  check("a blocked item is refused", /Cola is blocked/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.teacher, `select public.canteen_charge(null, $1, $2)`, [ids.alice, JSON.stringify([{ id: item.Juice }])]);
+  check("spending over the daily limit is refused", /daily limit/.test(r.error ?? ""), r.error ?? "accepted!");
+  await as(pa, `select public.set_wallet_controls($1, null, '{}')`, [ids.alice]);
+  r = await as(ids.teacher, `select public.canteen_charge(null, $1, $2)`, [ids.alice, JSON.stringify([{ id: item["Veg Sandwich"], qty: 3 }])]);
+  check("spending more than the balance is refused", /Not enough in the wallet/.test(r.error ?? ""), r.error ?? "accepted!");
+  check("the student sees their wallet history", (await count(ids.alice, `select * from public.canteen_transactions`)) === 2);
+  check("other students don't", (await count(ids.bob, `select * from public.canteen_transactions`)) === 0);
+  r = await as(ids.teacher, `update public.canteen_wallets set balance = 9999 where student_id = $1 returning balance`, [ids.alice]);
+  check("staff can't edit a balance directly", r.rows.length === 0, r.error ?? "");
+}
+
+// --- Section 18: homework planner ---
+{
+  const q1 = async (sql, params = []) => (await db.query(sql, params)).rows;
+  const pa = "00000000-0000-0000-0000-000000000095";
+  const [cls] = await q1(`select id from public.classes where name = 'Physics 12' and teacher_id = $1`, [ids.teacher]);
+  const [other] = await q1(`insert into public.classes (name, code) values ('Not Mine', 'NM1') returning id`);
+  const bobIn = (await q1(`select 1 from public.class_enrollments where class_id = $1 and student_id = $2`, [cls.id, ids.bob])).length > 0;
+  let r = await as(ids.teacher, `insert into public.course_materials (title, file_type, due_date, class_id) values ('Other class HW', 'Assignment', current_date + 1, $1)`, [other.id]);
+  check("teachers set homework only for their own classes", /own classes/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.teacher, `insert into public.course_materials (title, file_type, due_date, class_id) values
+    ('Forces worksheet', 'Assignment', current_date + 1, $1), ('Lab write-up', 'Assignment', current_date + 1, $1), ('Old essay', 'Assignment', current_date - 2, $1) returning id, title`, [cls.id]);
+  const hw = Object.fromEntries(r.rows.map((x) => [x.title, x.id]));
+  check("a teacher sets homework for their class", r.rows.length === 3, r.error ?? "");
+  check("the class is told about new homework", (await count(ids.alice, `select * from public.notifications where title = 'New assignment: Forces worksheet'`)) === 1);
+  if (!bobIn) check("students outside the class aren't told", (await count(ids.bob, `select * from public.notifications where title = 'New assignment: Forces worksheet'`)) === 0);
+
+  await q1(`insert into public.assignment_submissions (material_id, student_id, student_name) values ($1, $2, 'alice')`, [hw["Lab write-up"], ids.alice]);
+  r = await as(ids.alice, `select * from public.homework_for($1, current_date - 7, current_date + 7) where class_name = 'Physics 12'`, [ids.alice]);
+  check("the student sees the week's homework and what is handed in",
+    r.rows.length === 3 && r.rows.find((x) => x.title === "Lab write-up")?.submitted === true && r.rows.find((x) => x.title === "Forces worksheet")?.submitted === false, r.error ?? JSON.stringify(r.rows));
+  check("the parent sees their child's homework", (await count(pa, `select * from public.homework_for('${ids.alice}', current_date - 7, current_date + 7) where class_name = 'Physics 12'`)) === 3);
+  check("another student can't see someone else's", (await count(ids.bob, `select * from public.homework_for('${ids.alice}', current_date - 7, current_date + 7)`)) === 0);
+  if (!bobIn) check("homework for a class you're not in isn't yours", (await count(ids.bob, `select * from public.homework_for('${ids.bob}', current_date - 7, current_date + 7) where class_name = 'Physics 12'`)) === 0);
+
+  r = await as(ids.teacher, `select * from public.homework_load($1, current_date, current_date + 2)`, [cls.id]);
+  const tomorrow = r.rows[1];
+  check("the teacher sees how much is already due each day", r.rows.length === 3 && tomorrow?.heaviest >= 2, r.error ?? JSON.stringify(r.rows));
+  check("students get no class load view", (await count(ids.alice, `select * from public.homework_load('${cls.id}', current_date, current_date + 2)`)) === 0);
+
+  r = await as(ids.alice, `select public.remind_homework()`);
+  check("only administrators run the reminders by hand", /Administrators only/.test(r.error ?? ""), r.error ?? "accepted!");
+  const [{ n }] = await q1(`select public.remind_homework() as n`);
+  check("reminders are sent", n > 0, String(n));
+  r = await as(ids.alice, `select body from public.notifications where title = 'Homework due tomorrow'`);
+  check("the student is reminded only about work not handed in", r.rows.length === 1 && /Forces worksheet/.test(r.rows[0].body) && !/Lab write-up/.test(r.rows[0].body), JSON.stringify(r.rows));
+  r = await as(pa, `select body from public.notifications where title like '% has missing homework'`);
+  check("the parent is told about missed homework", r.rows.length === 1 && /Old essay/.test(r.rows[0].body), JSON.stringify(r.rows));
+  await q1(`select public.remind_homework()`);
+  check("reminders are not repeated", (await count(ids.alice, `select * from public.notifications where title = 'Homework due tomorrow'`)) === 1
+    && (await count(pa, `select * from public.notifications where title like '% has missing homework'`)) === 1);
+  r = await as(ids.alice, `select * from public.homework_reminders`);
+  check("the reminder log is private", !!r.error || r.rows.length === 0, r.error ?? "");
+}
+
 // --- Deactivated account ---
 await db.exec(`update public.profiles set active = false where id = '${ids.eve}'`);
 check("deactivated user sees no general chat", (await count(ids.eve, `select * from public.chat_messages where channel = 'general'`)) === 0);
@@ -1128,6 +1267,15 @@ check("teacher cannot delete admission documents", r.rows.length === 0, r.error 
 await db.exec(`insert into storage.objects (bucket_id, name, owner) values ('admission-docs', 'passport.pdf', '${ids.admin}')`);
 check("student cannot read admission documents", (await count(ids.alice, `select * from storage.objects where bucket_id = 'admission-docs'`)) === 0);
 check("teacher cannot read admission documents", (await count(ids.teacher, `select * from storage.objects where bucket_id = 'admission-docs'`)) === 0);
+
+// --- Re-running the schema on a database that has every kind of account ---
+await db.exec(`update public.profiles set role = 'alumni' where id = '${ids.eve}'`);
+try {
+  await db.exec(schema);
+  check("schema.sql re-runs when alumni accounts exist", true);
+} catch (e) {
+  check("schema.sql re-runs when alumni accounts exist", false, e.message);
+}
 
 console.log(results.join("\n"));
 console.log(`\n${results.length - failures}/${results.length} passed`);

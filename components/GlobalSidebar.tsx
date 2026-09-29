@@ -8,7 +8,7 @@ import {
   ClipboardCheck, Users as UsersIcon, Menu, ChevronLeft,
   Cpu, Briefcase, Library, Ticket, Car, LayoutDashboard, Settings,
   School, UserCheck, BookMarked, Megaphone, Plane, HeartHandshake, X,
-  Layers, Route, DoorOpen, Award, Activity, Plug, FlaskConical, BadgeCheck, ShoppingCart, FileCheck2, HandHeart, LifeBuoy, Smartphone, CalendarClock, ListChecks, IdCard,
+  Layers, Route, DoorOpen, Award, Activity, Plug, FlaskConical, BadgeCheck, ShoppingCart, FileCheck2, HandHeart, LifeBuoy, Smartphone, CalendarClock, ListChecks, IdCard, Stethoscope, UtensilsCrossed, NotebookPen,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -38,6 +38,7 @@ const NAV: NavItem[] = [
   { path: "/e-learning", icon: Book, label: "E-Learning", roles: EVERYONE_BUT_PARENTS },
   { path: "/exams", icon: ClipboardCheck, label: "Examinations", roles: EVERYONE_BUT_PARENTS },
   { path: "/quizzes", icon: ListChecks, label: "Quizzes", roles: EVERYONE_BUT_PARENTS },
+  { path: "/homework", icon: NotebookPen, label: "Homework Planner", roles: SCHOOL },
   { path: "/registrar", icon: GraduationCap, label: "Registrar (SIS)", roles: EVERYONE_BUT_PARENTS },
   { path: "/housing", icon: Building, label: "Housing & Facilities", roles: EVERYONE_BUT_PARENTS },
   { path: "/facilities", icon: DoorOpen, label: "Rooms & Assets", roles: EVERYONE_BUT_PARENTS },
@@ -46,6 +47,8 @@ const NAV: NavItem[] = [
   { path: "/calendar", icon: Calendar, label: "Master Calendar", roles: SCHOOL },
   { path: "/meetings", icon: CalendarClock, label: "Parent Meetings", roles: ["owner", "administration", "teacher", "parent"] },
   { path: "/gate", icon: IdCard, label: "Gate & Visitors", roles: ["owner", "administration", "teacher", "parent"] },
+  { path: "/health", icon: Stethoscope, label: "Health Room", roles: SCHOOL },
+  { path: "/canteen", icon: UtensilsCrossed, label: "Canteen", roles: SCHOOL },
   { path: "/leave", icon: Plane, label: "Leave & Absence", roles: SCHOOL },
   { path: "/makerspace", icon: Cpu, label: "MakerSpace & Labs", roles: EVERYONE_BUT_PARENTS },
   { path: "/careers", icon: Briefcase, label: "Career & Portfolio", roles: EVERYONE_BUT_PARENTS },
