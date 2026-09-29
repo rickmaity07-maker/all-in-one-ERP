@@ -144,14 +144,17 @@ test("Chat: file attachment uploads and opens intact", async ({ page }) => {
   const storagePath = decodeURIComponent(new URL(link).pathname.split("/object/sign/chat-files/")[1]);
   const [folder, storedName] = [storagePath.slice(0, storagePath.lastIndexOf("/")), storagePath.slice(storagePath.lastIndexOf("/") + 1)];
   // From the test machine (an app's WebView can't share its request context).
+  // The message can vanish (live update) a moment before the app has finished removing the file.
   const api = await request.newContext();
-  const res = await api.post(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/list/chat-files`, {
-    headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, Authorization: `Bearer ${await ownerToken(page)}` },
-    data: { prefix: folder, limit: 1000 },
-  });
-  const names = ((await res.json()) as { name: string }[]).map((f) => f.name);
+  const token = await ownerToken(page);
+  await expect.poll(async () => {
+    const res = await api.post(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/list/chat-files`, {
+      headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, Authorization: `Bearer ${token}` },
+      data: { prefix: folder, limit: 1000 },
+    });
+    return ((await res.json()) as { name: string }[]).map((f) => f.name);
+  }, { message: "file removed from storage", timeout: 20_000 }).not.toContain(storedName);
   await api.dispose();
-  expect(names, "file removed from storage").not.toContain(storedName);
 });
 
 test("Library: e-book uploads and the Read button opens it intact", async ({ page }) => {
