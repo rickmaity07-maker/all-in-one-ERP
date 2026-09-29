@@ -240,7 +240,7 @@ export default function ChatPortal() {
       </aside>
 
       {/* MAIN CHAT AREA */}
-      <main className="flex-1 bg-[#F4F7FE] flex flex-col min-w-0 relative">
+      <main data-bottom-bar className="flex-1 bg-[#F4F7FE] flex flex-col min-w-0 relative">
         <header className="min-h-20 bg-white/60 backdrop-blur-md border-b border-slate-200/50 flex items-center justify-between gap-3 px-4 md:px-8 py-3 shrink-0">
           <select
             aria-label="Conversation"

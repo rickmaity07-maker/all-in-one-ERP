@@ -7,8 +7,10 @@
   display: none;
 }
 
-/* While the floating update notice is up, leave room under the page so it never sits on top of a button. */
-html[data-update-notice] main {
+/* While the floating update notice is up, leave room under scrolling pages so it never sits on top of a button
+   (not on fixed, centred screens like sign-in, where it would only make the content jump). */
+html[data-update-notice] main.overflow-y-auto,
+html[data-update-notice] main[data-bottom-bar] {
   padding-bottom: 7rem;
 }
 

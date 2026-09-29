@@ -181,6 +181,7 @@ ${[
   ["Android", "A page reopened without signal stayed blank for up to 30 s while the phone tried to reach the server", "The profile and data saved on the phone are shown at once; fresh data follows when the connection is back"],
   ["All", "An update check finishing after the download had started replaced the download instructions", "Checks leave a started download alone"],
   ["Finance", "On a slow connection a statement printed right after a payment could miss that payment (an older answer overwrote the refreshed ledger)", "Older answers never replace newer ones"],
+  ["Phone", "The sign-in card jumped when the update notice appeared, so a tap could miss the button", "Only scrolling pages make room for the notice"],
 ].map(([w, p, f]) => `<tr><td>${w}</td><td>${p}</td><td>${f}</td></tr>`).join("")}
 </tbody></table></section>
 <section class="page"><h2>Features</h2><div class="cols">${FEATURES.map(([g, items]) => `<div><h3>${esc(g)}</h3><ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>`).join("")}</div></section>
