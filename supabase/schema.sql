@@ -3883,4 +3883,358 @@ begin
   end if;
 end $$;
 
+-- =====================================================================
+-- 14. ONLINE QUIZZES WITH AUTO-MARKING
+--     Teachers write a quiz for a class; students take it once, with a time limit; the server marks it
+--     and puts the score in the gradebook. Correct answers never reach students before the quiz closes.
+-- =====================================================================
+create table if not exists public.quizzes (
+  id uuid primary key default gen_random_uuid(),
+  class_id uuid not null references public.classes(id) on delete cascade,
+  title text not null check (length(trim(title)) > 0),
+  instructions text,
+  opens_at timestamptz not null default now(),
+  closes_at timestamptz,
+  time_limit_min int check (time_limit_min is null or time_limit_min between 1 and 300),
+  published boolean not null default false,
+  assessment_id uuid references public.assessments(id) on delete set null,
+  created_by uuid default auth.uid(),
+  created_at timestamptz not null default now(),
+  check (closes_at is null or closes_at > opens_at)
+);
+create table if not exists public.quiz_questions (
+  id uuid primary key default gen_random_uuid(),
+  quiz_id uuid not null references public.quizzes(id) on delete cascade,
+  position int not null default 1,
+  kind text not null check (kind in ('single', 'multi', 'truefalse', 'short', 'number')),
+  prompt text not null check (length(trim(prompt)) > 0),
+  options jsonb not null default '[]'::jsonb,   -- choices shown to students (single/multi)
+  answer jsonb not null,                        -- single: 2 · multi: [0,2] · truefalse: true · short: ["Paris"] · number: {"value": 9.81, "tol": 0.01}
+  points numeric not null default 1 check (points > 0),
+  created_at timestamptz not null default now()
+);
+create table if not exists public.quiz_attempts (
+  id uuid primary key default gen_random_uuid(),
+  quiz_id uuid not null references public.quizzes(id) on delete cascade,
+  student_id uuid not null references public.profiles(id) on delete cascade,
+  started_at timestamptz not null default now(),
+  submitted_at timestamptz,
+  answers jsonb not null default '{}'::jsonb,
+  marks jsonb not null default '{}'::jsonb,     -- question id → points earned
+  score numeric,
+  max_score numeric,
+  unique (quiz_id, student_id)
+);
+
+-- Questions can only change while nobody has started the quiz.
+create or replace function public.guard_quiz_question() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare q uuid := coalesce(new.quiz_id, old.quiz_id);
+begin
+  if exists (select 1 from public.quiz_attempts where quiz_id = q) then
+    raise exception 'Students have already started this quiz; its questions can no longer change.';
+  end if;
+  if tg_op <> 'DELETE' then
+    if new.kind in ('single', 'multi') and jsonb_array_length(new.options) < 2 then raise exception 'Give at least two choices.'; end if;
+    if new.kind = 'single' and not (jsonb_typeof(new.answer) = 'number' and (new.answer)::int between 0 and jsonb_array_length(new.options) - 1) then
+      raise exception 'Mark which choice is correct.';
+    end if;
+    if new.kind = 'multi' and not (jsonb_typeof(new.answer) = 'array' and jsonb_array_length(new.answer) > 0) then raise exception 'Mark the correct choices.'; end if;
+    if new.kind = 'truefalse' and jsonb_typeof(new.answer) <> 'boolean' then raise exception 'Say whether the statement is true or false.'; end if;
+    if new.kind = 'short' and not (jsonb_typeof(new.answer) = 'array' and jsonb_array_length(new.answer) > 0) then raise exception 'Give at least one accepted answer.'; end if;
+    if new.kind = 'number' and jsonb_typeof(new.answer -> 'value') <> 'number' then raise exception 'Give the correct number.'; end if;
+    return new;
+  end if;
+  return old;
+end $$;
+drop trigger if exists quiz_question_guard on public.quiz_questions;
+create trigger quiz_question_guard before insert or update or delete on public.quiz_questions for each row execute function public.guard_quiz_question();
+
+-- Marks one answer (all-or-nothing per question).
+create or replace function public.mark_answer(p_kind text, p_answer jsonb, p_given jsonb) returns boolean
+language plpgsql immutable as $$
+begin
+  if p_given is null or p_given = 'null'::jsonb then return false; end if;
+  case p_kind
+    when 'single' then return jsonb_typeof(p_given) = 'number' and (p_given)::int = (p_answer)::int;
+    when 'truefalse' then return jsonb_typeof(p_given) = 'boolean' and (p_given)::boolean = (p_answer)::boolean;
+    when 'multi' then
+      return jsonb_typeof(p_given) = 'array'
+        and (select coalesce(array_agg(x::int order by x::int), '{}') from jsonb_array_elements_text(p_given) x)
+          = (select array_agg(x::int order by x::int) from jsonb_array_elements_text(p_answer) x);
+    when 'short' then
+      return exists (select 1 from jsonb_array_elements_text(p_answer) a
+                     where lower(regexp_replace(trim(a), '\s+', ' ', 'g')) = lower(regexp_replace(trim(p_given #>> '{}'), '\s+', ' ', 'g')));
+    when 'number' then
+      return (p_given #>> '{}') ~ '^\s*-?[0-9]+([.,][0-9]+)?\s*$'
+        and abs(replace(trim(p_given #>> '{}'), ',', '.')::numeric - (p_answer ->> 'value')::numeric) <= coalesce((p_answer ->> 'tol')::numeric, 0);
+    else return false;
+  end case;
+end $$;
+
+-- Publishing creates (or updates) the quiz's column in the gradebook.
+create or replace function public.publish_quiz(p_quiz uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare q record; total numeric; aid uuid;
+begin
+  select * into q from public.quizzes where id = p_quiz;
+  if q.id is null or not public.teaches(q.class_id) then raise exception 'Not your class.'; end if;
+  select sum(points) into total from public.quiz_questions where quiz_id = p_quiz;
+  if total is null then raise exception 'Add at least one question first.'; end if;
+  if q.assessment_id is null then
+    insert into public.assessments (class_id, title, category, max_points, weight, due_date)
+    values (q.class_id, 'Quiz: ' || q.title, 'Quiz', total, 1, coalesce(q.closes_at, q.opens_at)::date) returning id into aid;
+  else
+    update public.assessments set max_points = total, title = 'Quiz: ' || q.title where id = q.assessment_id;
+    aid := q.assessment_id;
+  end if;
+  update public.quizzes set published = true, assessment_id = aid where id = p_quiz;
+  insert into public.notifications (user_id, title, body, link)
+  select e.student_id, 'New quiz: ' || q.title,
+         case when q.closes_at is null then 'Open now.' else 'Open until ' || public.school_time(q.closes_at) || '.' end, '/quizzes'
+  from public.class_enrollments e where e.class_id = q.class_id and e.status = 'enrolled';
+end $$;
+
+-- The questions a student sees: never the answers.
+create or replace function public.quiz_paper(p_quiz uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'kind', kind, 'prompt', prompt, 'options', options, 'points', points) order by position, created_at), '[]'::jsonb)
+  from public.quiz_questions where quiz_id = p_quiz
+$$;
+revoke execute on function public.quiz_paper(uuid) from public, anon, authenticated;
+
+create or replace function public.start_quiz(p_quiz uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare q record; a record;
+begin
+  select * into q from public.quizzes where id = p_quiz;
+  if q.id is null or not q.published then raise exception 'This quiz is not available.'; end if;
+  if not exists (select 1 from public.class_enrollments where class_id = q.class_id and student_id = auth.uid() and status = 'enrolled') then
+    raise exception 'This quiz is for another class.';
+  end if;
+  if now() < q.opens_at then raise exception 'This quiz opens at %.', public.school_time(q.opens_at); end if;
+  if q.closes_at is not null and now() > q.closes_at then raise exception 'This quiz has closed.'; end if;
+  insert into public.quiz_attempts (quiz_id, student_id) values (p_quiz, auth.uid()) on conflict (quiz_id, student_id) do nothing;
+  select * into a from public.quiz_attempts where quiz_id = p_quiz and student_id = auth.uid();
+  if a.submitted_at is not null then raise exception 'You have already handed this quiz in.'; end if;
+  return jsonb_build_object('attempt', a.id, 'started_at', a.started_at, 'saved', a.answers,
+    'deadline', least(case when q.time_limit_min is null then null else a.started_at + make_interval(mins => q.time_limit_min) end, q.closes_at),
+    'questions', public.quiz_paper(p_quiz));
+end $$;
+
+-- Hands the quiz in and marks it. A couple of minutes of grace covers slow connections.
+create or replace function public.submit_quiz(p_quiz uuid, p_answers jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare q record; a record; qq record; deadline timestamptz; got numeric := 0; total numeric := 0; v_marks jsonb := '{}'::jsonb; ok boolean;
+begin
+  select * into q from public.quizzes where id = p_quiz;
+  select * into a from public.quiz_attempts where quiz_id = p_quiz and student_id = auth.uid() for update;
+  if a.id is null then raise exception 'Start the quiz first.'; end if;
+  if a.submitted_at is not null then raise exception 'You have already handed this quiz in.'; end if;
+  deadline := least(case when q.time_limit_min is null then null else a.started_at + make_interval(mins => q.time_limit_min) end, q.closes_at);
+  if deadline is not null and now() > deadline + interval '2 minutes' then raise exception 'Time is up for this quiz.'; end if;
+  for qq in select * from public.quiz_questions where quiz_id = p_quiz loop
+    ok := public.mark_answer(qq.kind, qq.answer, p_answers -> qq.id::text);
+    total := total + qq.points;
+    if ok then got := got + qq.points; end if;
+    v_marks := v_marks || jsonb_build_object(qq.id::text, case when ok then qq.points else 0 end);
+  end loop;
+  update public.quiz_attempts set submitted_at = now(), answers = coalesce(p_answers, '{}'::jsonb), marks = v_marks, score = got, max_score = total where id = a.id;
+  if q.assessment_id is not null then
+    insert into public.grades (assessment_id, student_id, score) values (q.assessment_id, auth.uid(), got)
+    on conflict (assessment_id, student_id) do update set score = excluded.score;
+  end if;
+  return jsonb_build_object('score', got, 'max_score', total);
+end $$;
+
+-- After the quiz closes (or straight away when it has no closing time), students see the answers.
+create or replace function public.quiz_review(p_quiz uuid) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare q record; a record;
+begin
+  select * into q from public.quizzes where id = p_quiz;
+  select * into a from public.quiz_attempts where quiz_id = p_quiz and student_id = auth.uid();
+  if a.submitted_at is null then raise exception 'Hand the quiz in first.'; end if;
+  if q.closes_at is not null and now() < q.closes_at then
+    return jsonb_build_object('score', a.score, 'max_score', a.max_score, 'answers_shown_from', q.closes_at);
+  end if;
+  return jsonb_build_object('score', a.score, 'max_score', a.max_score, 'questions',
+    (select jsonb_agg(jsonb_build_object('id', id, 'kind', kind, 'prompt', prompt, 'options', options, 'points', points, 'answer', answer,
+       'given', a.answers -> id::text, 'earned', coalesce((a.marks ->> id::text)::numeric, 0)) order by position, created_at)
+     from public.quiz_questions where quiz_id = p_quiz));
+end $$;
+
+-- For the teacher: how each question went (share of students who got it right).
+create or replace function public.quiz_item_analysis(p_quiz uuid) returns table (question_id uuid, prompt text, attempts int, correct int)
+language sql stable security definer set search_path = public as $$
+  select qq.id, qq.prompt,
+         count(a.id)::int,
+         count(a.id) filter (where coalesce((a.marks ->> qq.id::text)::numeric, 0) >= qq.points)::int
+  from public.quiz_questions qq
+  join public.quizzes q on q.id = qq.quiz_id
+  left join public.quiz_attempts a on a.quiz_id = qq.quiz_id and a.submitted_at is not null
+  where qq.quiz_id = p_quiz and public.teaches(q.class_id)
+  group by qq.id, qq.prompt, qq.position, qq.created_at
+  order by qq.position, qq.created_at
+$$;
+
+do $$
+declare p record;
+begin
+  for p in select policyname, tablename from pg_policies where schemaname = 'public' and tablename in ('quizzes', 'quiz_questions', 'quiz_attempts') loop
+    execute format('drop policy if exists %I on public.%I', p.policyname, p.tablename);
+  end loop;
+end $$;
+alter table public.quizzes enable row level security;
+create policy "quizzes teacher" on public.quizzes for all to authenticated using (public.teaches(class_id)) with check (public.teaches(class_id));
+create policy "quizzes student read" on public.quizzes for select to authenticated using (published and public.enrolled(class_id));
+alter table public.quiz_questions enable row level security;
+-- Only the class's teachers read questions directly (with answers); students get them through start_quiz.
+create policy "questions teacher" on public.quiz_questions for all to authenticated
+  using (exists (select 1 from public.quizzes q where q.id = quiz_id and public.teaches(q.class_id)))
+  with check (exists (select 1 from public.quizzes q where q.id = quiz_id and public.teaches(q.class_id)));
+alter table public.quiz_attempts enable row level security;
+create policy "attempts own read" on public.quiz_attempts for select to authenticated using (student_id = auth.uid());
+create policy "attempts teacher read" on public.quiz_attempts for select to authenticated
+  using (exists (select 1 from public.quizzes q where q.id = quiz_id and public.teaches(q.class_id)));
+-- Students never see marks for individual questions before the quiz closes (they could work out the answers).
+revoke select on public.quiz_attempts from anon, authenticated;
+grant select (id, quiz_id, student_id, started_at, submitted_at, score, max_score) on public.quiz_attempts to authenticated;
+
+revoke execute on function public.publish_quiz(uuid), public.start_quiz(uuid), public.submit_quiz(uuid, jsonb), public.quiz_review(uuid),
+  public.quiz_item_analysis(uuid) from public, anon;
+grant execute on function public.publish_quiz(uuid), public.start_quiz(uuid), public.submit_quiz(uuid, jsonb), public.quiz_review(uuid),
+  public.quiz_item_analysis(uuid) to authenticated;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['quizzes', 'quiz_questions'] loop
+    execute format('drop trigger if exists audit_%s on public.%I', t, t);
+    execute format('create trigger audit_%s after insert or update or delete on public.%I for each row execute function public.write_audit()', t, t);
+  end loop;
+end $$;
+
+-- =====================================================================
+-- 15. VISITOR AND PICKUP PASSES
+--     Staff pre-register visitors; parents name the person collecting their child on a given day.
+--     Each pass has a short code (shown as a QR) checked at the gate; the host or parent is told.
+-- =====================================================================
+create table if not exists public.gate_passes (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null check (kind in ('visit', 'pickup')),
+  code text not null unique default upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8)),
+  person_name text not null check (length(trim(person_name)) > 0),
+  person_phone text,
+  purpose text,
+  host_id uuid references public.profiles(id) on delete cascade,      -- visit: the member of staff being visited
+  student_id uuid references public.profiles(id) on delete cascade,   -- pickup: the child being collected
+  valid_on date not null default current_date,
+  status text not null default 'expected' check (status in ('expected', 'arrived', 'left', 'cancelled')),
+  created_by uuid default auth.uid(),
+  arrived_at timestamptz,
+  left_at timestamptz,
+  checked_by uuid,
+  created_at timestamptz not null default now(),
+  check ((kind = 'visit' and host_id is not null) or (kind = 'pickup' and student_id is not null))
+);
+create index if not exists gate_passes_day on public.gate_passes (valid_on, status);
+
+create or replace function public.before_gate_pass() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  new.created_by := auth.uid();
+  new.status := 'expected'; new.arrived_at := null; new.left_at := null; new.checked_by := null;
+  if new.valid_on < current_date then raise exception 'Choose today or a later day.'; end if;
+  if new.kind = 'visit' then
+    if not public.is_staff() then raise exception 'Visitor passes are made by staff.'; end if;
+    new.host_id := auth.uid(); new.student_id := null;
+  else
+    if not public.is_guardian_of(new.student_id) then raise exception 'You can only name someone to collect your own child.'; end if;
+    new.host_id := null;
+  end if;
+  return new;
+end $$;
+drop trigger if exists gate_pass_before on public.gate_passes;
+create trigger gate_pass_before before insert on public.gate_passes for each row execute function public.before_gate_pass();
+
+-- At the gate: what a code is for (staff only).
+create or replace function public.gate_lookup(p_code text) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare g record;
+begin
+  if not public.is_staff() then raise exception 'The gate desk is for staff.'; end if;
+  select * into g from public.gate_passes where code = upper(regexp_replace(coalesce(p_code, ''), '[^0-9A-Za-z]', '', 'g'));
+  if g.id is null then return jsonb_build_object('found', false); end if;
+  return jsonb_build_object('found', true, 'id', g.id, 'kind', g.kind, 'code', g.code, 'person_name', g.person_name, 'person_phone', g.person_phone,
+    'purpose', g.purpose, 'valid_on', g.valid_on, 'status', g.status, 'valid_today', g.valid_on = current_date and g.status <> 'cancelled',
+    'host', (select full_name from public.profiles where id = g.host_id),
+    'student', (select full_name from public.profiles where id = g.student_id),
+    'arrived_at', g.arrived_at, 'left_at', g.left_at);
+end $$;
+
+-- Records arrival / departure and tells the host or the parents.
+create or replace function public.gate_check(p_code text, p_action text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare g record; child text;
+begin
+  if not public.is_staff() then raise exception 'The gate desk is for staff.'; end if;
+  select * into g from public.gate_passes where code = upper(regexp_replace(coalesce(p_code, ''), '[^0-9A-Za-z]', '', 'g')) for update;
+  if g.id is null then raise exception 'No pass with that code.'; end if;
+  if g.status = 'cancelled' then raise exception 'This pass was cancelled.'; end if;
+  if g.valid_on <> current_date then raise exception 'This pass is for %.', to_char(g.valid_on, 'Dy DD Mon'); end if;
+  if p_action = 'arrive' then
+    if g.status <> 'expected' then raise exception 'Already checked in.'; end if;
+    update public.gate_passes set status = 'arrived', arrived_at = now(), checked_by = auth.uid() where id = g.id;
+    if g.kind = 'visit' then
+      perform public.notify_user(g.host_id, 'Your visitor has arrived', format('%s is at the gate%s.', g.person_name, coalesce(' (' || g.purpose || ')', '')), '/gate');
+    end if;
+  elsif p_action = 'leave' then
+    if g.status = 'left' then raise exception 'Already checked out.'; end if;
+    update public.gate_passes set status = 'left', left_at = now(), arrived_at = coalesce(arrived_at, now()), checked_by = auth.uid() where id = g.id;
+    if g.kind = 'pickup' then
+      select full_name into child from public.profiles where id = g.student_id;
+      insert into public.notifications (user_id, title, body, link)
+      select guardian_id, format('%s has been collected', child), format('%s collected %s at %s.', g.person_name, child, public.school_time(now())), '/gate'
+      from public.guardian_links where student_id = g.student_id;
+    end if;
+  else
+    raise exception 'Unknown action.';
+  end if;
+  return public.gate_lookup(g.code);
+end $$;
+
+create or replace function public.cancel_gate_pass(p_id uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare g record;
+begin
+  select * into g from public.gate_passes where id = p_id;
+  if g.id is null or not (g.created_by = auth.uid() or public.is_admin()) then raise exception 'Not your pass.'; end if;
+  if g.status <> 'expected' then raise exception 'This pass has already been used.'; end if;
+  update public.gate_passes set status = 'cancelled' where id = p_id;
+end $$;
+
+do $$
+declare p record;
+begin
+  for p in select policyname, tablename from pg_policies where schemaname = 'public' and tablename = 'gate_passes' loop
+    execute format('drop policy if exists %I on public.%I', p.policyname, p.tablename);
+  end loop;
+end $$;
+alter table public.gate_passes enable row level security;
+-- Makers, hosts and the child's parents see their passes; administrators see all. The gate desk works through gate_lookup.
+create policy "passes read" on public.gate_passes for select to authenticated
+  using (created_by = auth.uid() or host_id = auth.uid() or public.is_admin() or (student_id is not null and public.is_guardian_of(student_id)));
+create policy "passes create" on public.gate_passes for insert to authenticated with check (public.is_member());
+
+revoke execute on function public.gate_lookup(text), public.gate_check(text, text), public.cancel_gate_pass(uuid) from public, anon;
+grant execute on function public.gate_lookup(text), public.gate_check(text, text), public.cancel_gate_pass(uuid) to authenticated;
+
+do $$
+begin
+  execute 'drop trigger if exists audit_gate_passes on public.gate_passes';
+  execute 'create trigger audit_gate_passes after insert or update or delete on public.gate_passes for each row execute function public.write_audit()';
+end $$;
+
 notify pgrst, 'reload schema';

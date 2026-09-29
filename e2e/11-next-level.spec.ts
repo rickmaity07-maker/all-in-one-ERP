@@ -534,6 +534,114 @@ test("website: after the first visit it opens without a connection", async ({ pa
   await page.context().setOffline(false);
 });
 
+test("quizzes: a teacher writes and publishes one; the student takes it; the server marks it into the gradebook", async ({ page }) => {
+  test.skip(!TODAY_IS_SCHOOL_DAY, "The student is enrolled by the timetable test, which needs a school day.");
+  const QUIZ = L("Forces quiz");
+  await as(page, teacher);
+  await page.goto("/quizzes");
+  await page.getByRole("button", { name: "New quiz" }).click();
+  await modal(page).getByLabel("Class").selectOption({ label: CLASS });
+  await modal(page).getByLabel("Title").fill(QUIZ);
+  await modal(page).getByLabel("Time limit in minutes (optional)").fill("10");
+  await modal(page).getByRole("button", { name: "Create quiz" }).click();
+  await expectToast(page, "Quiz created. Add its questions.");
+  // One choice question worth 2 points, one short answer worth 1.
+  await modal(page).getByLabel("Question", { exact: true }).fill("Unit of force?");
+  await modal(page).getByLabel("Choices (one per line)").fill("Joule\nNewton\nWatt");
+  await modal(page).getByRole("group", { name: "Correct" }).getByLabel("Newton").check();
+  await modal(page).getByLabel("Points").fill("2");
+  await modal(page).getByRole("button", { name: "Add question" }).click();
+  await expectToast(page, "Question added.");
+  await modal(page).getByLabel("Type").selectOption("short");
+  await modal(page).getByLabel("Question", { exact: true }).fill("Capital of France?");
+  await modal(page).getByLabel("Accepted answers (comma or one per line)").fill("Paris");
+  await modal(page).getByRole("button", { name: "Add question" }).click();
+  await expectToast(page, "Question added.");
+  await modal(page).getByRole("button", { name: "Publish" }).click();
+  await expectToast(page, "Quiz published. The class has been told.");
+  await modal(page).getByRole("button", { name: "Close", exact: true }).click();
+  await logout(page);
+
+  await as(page, student);
+  await page.goto("/quizzes");
+  const card = page.locator("div.rounded-3xl").filter({ hasText: QUIZ }).first();
+  await card.getByRole("button", { name: "Start" }).click();
+  await expect(modal(page).getByText(/Time left/)).toBeVisible();
+  await modal(page).getByLabel("Newton").check();
+  await modal(page).getByLabel("Answer to question 2").fill("London");
+  await modal(page).getByRole("button", { name: "Hand in" }).click();
+  await expect(modal(page).getByTestId("quiz-score")).toHaveText("2 / 3");
+  await modal(page).getByRole("button", { name: "Done" }).click();
+  await expect(card.getByText("2 / 3")).toBeVisible();
+  await card.getByRole("button", { name: "Review" }).click();
+  await expect(modal(page).getByText("Correct answer: Paris")).toBeVisible();
+  await modal(page).getByRole("button", { name: "Close" }).click();
+  await logout(page);
+
+  await as(page, teacher);
+  await page.goto("/quizzes");
+  await page.locator("div.rounded-3xl").filter({ hasText: QUIZ }).first().getByRole("button", { name: "Results" }).click();
+  await expect(row(page, student.name)).toContainText("2 / 3");
+  await page.goto("/gradebook");
+  await expect(page.getByText(`Quiz: ${QUIZ}`).first()).toBeVisible();
+});
+
+test("gate: a parent names who collects their child; a visitor is expected; the gate checks both and tells the right people", async ({ page }) => {
+  // Pickup pass (parent) → let out at the gate (teacher) → the parent is told.
+  await as(page, parent);
+  await page.goto("/gate");
+  await page.getByRole("button", { name: "New pickup pass" }).click();
+  await modal(page).getByLabel("Name of the person collecting").fill("Grandma Rose");
+  await modal(page).getByLabel("Their phone (optional)").fill("+919800000001");
+  await modal(page).getByRole("button", { name: "Create pass" }).click();
+  await expectToast(page, /Pass created/);
+  const pickupCode = ((await modal(page).getByTestId("pass-code").textContent()) ?? "").trim();
+  expect(pickupCode).toMatch(/^[0-9A-F]{8}$/);
+  await expect(modal(page).getByRole("img", { name: "Pass QR code" })).toBeVisible();
+  await modal(page).getByRole("button", { name: "Close" }).click();
+  await logout(page);
+
+  // Visitor pass (teacher).
+  await as(page, teacher);
+  await page.goto("/gate");
+  await tab(page, "My visitor passes");
+  await page.getByRole("button", { name: "New visitor pass" }).click();
+  await modal(page).getByLabel("Visitor's name").fill("Ms Auditor");
+  await modal(page).getByLabel("Purpose").fill("Inspection");
+  await modal(page).getByRole("button", { name: "Create pass" }).click();
+  await expectToast(page, /Pass created/);
+  const visitCode = ((await modal(page).getByTestId("pass-code").textContent()) ?? "").trim();
+  await modal(page).getByRole("button", { name: "Close" }).click();
+
+  // The teacher at the gate desk lets the child out with Grandma.
+  await tab(page, "Gate desk");
+  await page.getByLabel("Pass code").fill(pickupCode.toLowerCase());
+  await page.getByRole("button", { name: "Check", exact: true }).click();
+  const found = page.getByRole("status").filter({ hasText: "Grandma Rose" });
+  await expect(found).toContainText(`Collecting ${student.name}`);
+  await found.getByRole("button", { name: "Let out with the child" }).click();
+  await expectToast(page, "Checked out.");
+  await expect(found).toContainText("left");
+  await logout(page);
+
+  // The owner at the gate checks the visitor in; the teacher is told.
+  await as(page, owner);
+  await page.goto("/gate");
+  await page.getByLabel("Pass code").fill(visitCode);
+  await page.getByRole("button", { name: "Check", exact: true }).click();
+  const v = page.getByRole("status").filter({ hasText: "Ms Auditor" });
+  await expect(v).toContainText(`Visiting ${teacher.name}`);
+  await v.getByRole("button", { name: "Check in" }).click();
+  await expectToast(page, "Checked in.");
+  await expect(v).toContainText("arrived");
+
+  const parentTold = await (await api(parent)).get("notifications?title=like.*has%20been%20collected&select=body");
+  expect(parentTold.length, "parent told about the pickup").toBe(1);
+  expect(String(parentTold[0].body)).toContain("Grandma Rose");
+  const hostTold = await (await api(teacher)).get("notifications?title=eq.Your%20visitor%20has%20arrived&select=id");
+  expect(hostTold.length, "host told about the visitor").toBe(1);
+});
+
 test("AI assistant: opens from the sidebar, offers questions for the role, and answers or says it isn't set up", async ({ page }) => {
   await as(page, student);
   await page.getByRole("button", { name: "Ask AI" }).first().click();

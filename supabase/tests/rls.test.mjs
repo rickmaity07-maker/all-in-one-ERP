@@ -988,6 +988,119 @@ check("user clears the flag after changing password", !r.error && r.rows.length 
   check("the slot is free again", (await q1(`select booked_by from public.meeting_slots where id = $1`, [slot]))[0]?.booked_by === null);
 }
 
+// --- Section 14: online quizzes ---
+{
+  const q1 = async (sql, params = []) => (await db.query(sql, params)).rows;
+  const [cls] = await q1(`select id from public.classes where name = 'Physics 12' and teacher_id = $1`, [ids.teacher]);
+  let r = await as(ids.teacher, `insert into public.quizzes (class_id, title) values ($1, 'Forces') returning id`, [cls.id]);
+  const quiz = r.rows[0]?.id;
+  check("teachers create quizzes for their class", !!quiz, r.error ?? "");
+  r = await as(ids.alice, `insert into public.quizzes (class_id, title) values ($1, 'Mine')`, [cls.id]);
+  check("students cannot create quizzes", !!r.error, r.error ?? "accepted!");
+
+  const add = (kind, prompt, options, answer, points = 1) =>
+    as(ids.teacher, `insert into public.quiz_questions (quiz_id, kind, prompt, options, answer, points, position) values ($1, $2, $3, $4, $5, $6, (select count(*) + 1 from public.quiz_questions where quiz_id = $1)) returning id`,
+      [quiz, kind, prompt, JSON.stringify(options), JSON.stringify(answer), points]);
+  r = await add("single", "Unit of force?", ["Joule", "Newton", "Watt"], 5);
+  check("a choice question must mark a real choice as correct", /Mark which choice/.test(r.error ?? ""), r.error ?? "accepted!");
+  const qs = {};
+  qs.single = (await add("single", "Unit of force?", ["Joule", "Newton", "Watt"], 1, 2)).rows[0]?.id;
+  qs.multi = (await add("multi", "Vectors?", ["Force", "Mass", "Velocity"], [0, 2])).rows[0]?.id;
+  qs.tf = (await add("truefalse", "Mass is measured in kg.", [], true)).rows[0]?.id;
+  qs.short = (await add("short", "Capital of France?", [], ["Paris"])).rows[0]?.id;
+  qs.num = (await add("number", "g on Earth (m/s²)?", [], { value: 9.81, tol: 0.05 })).rows[0]?.id;
+  check("teachers add each kind of question", Object.values(qs).every(Boolean), JSON.stringify(qs));
+
+  check("students can't see an unpublished quiz", (await count(ids.alice, `select * from public.quizzes where id = '${quiz}'`)) === 0);
+  r = await as(ids.alice, `select * from public.quiz_questions`);
+  check("students can never read questions (or answers) directly", r.rows.length === 0, r.error ?? "");
+  r = await as(ids.alice, `select public.start_quiz($1)`, [quiz]);
+  check("an unpublished quiz can't be started", /not available/.test(r.error ?? ""), r.error ?? "accepted!");
+
+  r = await as(ids.teacher, `select public.publish_quiz($1)`, [quiz]);
+  check("the teacher publishes the quiz", !r.error, r.error ?? "");
+  const [asmt] = await q1(`select a.max_points from public.assessments a join public.quizzes q on q.assessment_id = a.id where q.id = $1`, [quiz]);
+  check("publishing adds it to the gradebook worth all its points", Number(asmt?.max_points) === 6, JSON.stringify(asmt));
+  check("the class's students are told", (await count(ids.alice, `select * from public.notifications where title = 'New quiz: Forces'`)) === 1);
+
+  r = await as(ids.bob, `select public.start_quiz($1)`, [quiz]);
+  check("students of other classes can't take it", /another class/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.alice, `select public.start_quiz($1) as p`, [quiz]);
+  const paper = r.rows[0]?.p;
+  check("the student gets the questions without the answers", paper?.questions?.length === 5 && paper.questions.every((x) => !("answer" in x)), r.error ?? JSON.stringify(paper));
+  r = await as(ids.teacher, `update public.quiz_questions set answer = '2' where id = $1`, [qs.single]);
+  check("questions can't change once a student has started", /already started/.test(r.error ?? ""), r.error ?? "accepted!");
+
+  const answers = { [qs.single]: 1, [qs.multi]: [0], [qs.tf]: true, [qs.short]: "  paris ", [qs.num]: "9,8" };
+  r = await as(ids.alice, `select public.submit_quiz($1, $2) as res`, [quiz, JSON.stringify(answers)]);
+  check("the server marks it (choice, true/false, short answer and number right; incomplete multi-select wrong)",
+    Number(r.rows[0]?.res?.score) === 5 && Number(r.rows[0]?.res?.max_score) === 6, r.error ?? JSON.stringify(r.rows));
+  r = await as(ids.alice, `select public.submit_quiz($1, '{}')`, [quiz]);
+  check("a quiz is handed in only once", /already handed/.test(r.error ?? ""), r.error ?? "accepted!");
+  const [g] = await q1(`select score from public.grades where student_id = $1 and assessment_id = (select assessment_id from public.quizzes where id = $2)`, [ids.alice, quiz]);
+  check("the score goes into the gradebook", Number(g?.score) === 5, JSON.stringify(g));
+  r = await as(ids.alice, `select marks from public.quiz_attempts`);
+  check("students can't read per-question marks directly", !!r.error, r.error ?? "readable!");
+  r = await as(ids.alice, `select public.quiz_review($1) as v`, [quiz]);
+  check("with no closing time, the student reviews the answers after handing in", r.rows[0]?.v?.questions?.length === 5 && "answer" in r.rows[0].v.questions[0], r.error ?? "");
+  r = await as(ids.teacher, `select * from public.quiz_item_analysis($1)`, [quiz]);
+  check("the teacher sees how each question went", r.rows.length === 5 && r.rows.find((x) => x.question_id === qs.multi)?.correct === 0, r.error ?? JSON.stringify(r.rows));
+  check("students get no item analysis", (await count(ids.alice, `select * from public.quiz_item_analysis('${quiz}')`)) === 0);
+
+  // Time limit
+  const [timed] = await q1(`insert into public.quizzes (class_id, title, time_limit_min, closes_at) values ($1, 'Timed', 1, now() + interval '1 day') returning id`, [cls.id]);
+  await q1(`insert into public.quiz_questions (quiz_id, kind, prompt, answer) values ($1, 'truefalse', 'Ok?', 'true')`, [timed.id]);
+  await as(ids.teacher, `select public.publish_quiz($1)`, [timed.id]);
+  await as(ids.alice, `select public.start_quiz($1)`, [timed.id]);
+  r = await as(ids.alice, `select public.quiz_review($1)`, [timed.id]);
+  check("no review before handing in", !!r.error, r.error ?? "accepted!");
+  await q1(`update public.quiz_attempts set started_at = now() - interval '10 minutes' where quiz_id = $1`, [timed.id]);
+  r = await as(ids.alice, `select public.submit_quiz($1, '{}')`, [timed.id]);
+  check("answers after the time limit are refused", /Time is up/.test(r.error ?? ""), r.error ?? "accepted!");
+}
+
+// --- Section 15: visitor and pickup passes ---
+{
+  const pa = "00000000-0000-0000-0000-000000000095"; // parent of alice (section 13)
+  let r = await as(ids.teacher, `insert into public.gate_passes (kind, person_name, purpose, host_id) values ('visit', 'Mr Inspector', 'Lab safety check', $1) returning id, code, host_id`, [ids.alice]);
+  const visit = r.rows[0];
+  check("staff create visitor passes (always for themselves)", !!visit && visit.host_id === ids.teacher, r.error ?? JSON.stringify(visit));
+  r = await as(ids.alice, `insert into public.gate_passes (kind, person_name, host_id) values ('visit', 'Friend', $1)`, [ids.teacher]);
+  check("students cannot create visitor passes", /made by staff/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(pa, `insert into public.gate_passes (kind, person_name, person_phone, student_id) values ('pickup', 'Grandma', '+919800000000', $1) returning id, code`, [ids.alice]);
+  const pickup = r.rows[0];
+  check("a parent names who collects their child", !!pickup, r.error ?? "");
+  r = await as(pa, `insert into public.gate_passes (kind, person_name, student_id) values ('pickup', 'Stranger', $1)`, [ids.bob]);
+  check("a parent cannot name someone for another child", /own child/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(pa, `insert into public.gate_passes (kind, person_name, student_id, valid_on) values ('pickup', 'Late', $1, current_date - 1)`, [ids.alice]);
+  check("passes can't be made for past days", /today or a later day/.test(r.error ?? ""), r.error ?? "accepted!");
+  check("other people can't see a pass", (await count(ids.bob, `select * from public.gate_passes`)) === 0);
+  check("the parent sees their pickup pass", (await count(pa, `select * from public.gate_passes where id = '${pickup?.id}'`)) === 1);
+
+  r = await as(ids.alice, `select public.gate_lookup($1)`, [visit?.code]);
+  check("only staff use the gate desk", /for staff/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.admin, `select public.gate_lookup($1) as g`, [String(visit?.code).toLowerCase()]);
+  check("the gate looks a code up (any letter case)", r.rows[0]?.g?.person_name === "Mr Inspector" && r.rows[0].g.valid_today === true, r.error ?? JSON.stringify(r.rows));
+  check("an unknown code is reported as not found", (await as(ids.admin, `select public.gate_lookup('ZZZZ9999') as g`)).rows[0]?.g?.found === false);
+  r = await as(ids.admin, `select public.gate_check($1, 'arrive') as g`, [visit?.code]);
+  check("arrival is recorded and the host is told", r.rows[0]?.g?.status === "arrived" && (await count(ids.teacher, `select * from public.notifications where title = 'Your visitor has arrived'`)) === 1, r.error ?? "");
+  r = await as(ids.admin, `select public.gate_check($1, 'arrive')`, [visit?.code]);
+  check("a pass checks in only once", /Already checked in/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.admin, `select public.gate_check($1, 'leave') as g`, [pickup?.code]);
+  check("a pickup is recorded and the parents are told", r.rows[0]?.g?.status === "left" && (await count(pa, `select * from public.notifications where title like '% has been collected'`)) === 1, r.error ?? "");
+  r = await as(pa, `select public.cancel_gate_pass($1)`, [pickup?.id]);
+  check("a used pass can't be cancelled", /already been used/.test(r.error ?? ""), r.error ?? "accepted!");
+  const future = (await as(pa, `insert into public.gate_passes (kind, person_name, student_id, valid_on) values ('pickup', 'Uncle', $1, current_date + 2) returning id, code`, [ids.alice])).rows[0];
+  r = await as(ids.admin, `select public.gate_check($1, 'arrive')`, [future?.code]);
+  check("a pass only works on its day", /This pass is for/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(pa, `select public.cancel_gate_pass($1)`, [future?.id]);
+  check("the parent cancels an unused pass", !r.error, r.error ?? "");
+  r = await as(ids.admin, `select public.gate_check($1, 'arrive')`, [future?.code]);
+  check("a cancelled pass is refused at the gate", /cancelled/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.alice, `update public.gate_passes set status = 'left' where id = $1 returning id`, [visit?.id]);
+  check("nobody changes a pass directly", r.rows.length === 0, r.error ?? "");
+}
+
 // --- Deactivated account ---
 await db.exec(`update public.profiles set active = false where id = '${ids.eve}'`);
 check("deactivated user sees no general chat", (await count(ids.eve, `select * from public.chat_messages where channel = 'general'`)) === 0);
