@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Wallet, Lock, Unlock, Receipt, HandCoins, CalendarClock, Plus, Printer, RefreshCw, ShieldCheck } from "lucide-react";
 import PayOnline from "@/components/PayOnline";
 import { useT } from "@/lib/i18n";
@@ -71,13 +71,20 @@ export function AccountsAdmin({ search }: { search: string }) {
     return () => { cancelled = true; };
   }, [fetchAll]);
 
+  // Loads can finish out of order (e.g. the first open and the refresh after a payment): never let an
+  // older answer replace a newer one.
+  const openSeq = useRef(0);
+  const appliedSeq = useRef(0);
   const openAccount = async (acct: Row) => {
     setOpen(acct);
+    const mine = ++openSeq.current;
     const [l, a, p] = await Promise.all([
       supabase.from("ledger_entries").select("*").eq("account_id", acct.account_id).order("created_at"),
       supabase.from("aid_awards").select("*").eq("student_id", acct.student_id).order("created_at", { ascending: false }),
       supabase.from("payment_plans").select("*, plan_installments(*)").eq("account_id", acct.account_id),
     ]);
+    if (mine < appliedSeq.current) return;
+    appliedSeq.current = mine;
     setLedger(l.data ?? []);
     setAid(a.data ?? []);
     setPlans(p.data ?? []);
