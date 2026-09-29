@@ -7,6 +7,7 @@ import ConnectionBanner from "../components/ConnectionBanner";
 import { Toaster } from "../components/ui";
 import { AuthGuard, SessionProvider } from "../lib/session";
 import { LanguageProvider } from "../lib/i18n";
+import OfflineWebsite from "../components/OfflineWebsite";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-latin" });
 // Hindi and Bengali text falls back to these (Inter has no Devanagari or Bengali letters).
@@ -47,6 +48,7 @@ export default function RootLayout({
             </AuthGuard>
           </div>
 
+          <OfflineWebsite />
           <Toaster />
           </LanguageProvider>
         </SessionProvider>

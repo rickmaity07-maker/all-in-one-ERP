@@ -1,4 +1,7 @@
 import type { NextConfig } from "next";
+import { readFileSync } from "node:fs";
+
+const { version } = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
 
 // The desktop app serves the export from the root; the GitHub Pages web version lives under /<repo>.
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || undefined;
@@ -14,6 +17,8 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  // Lets the web version name its offline cache after the release (sw.js?v=…).
+  env: { NEXT_PUBLIC_APP_VERSION: version },
 };
 
 export default nextConfig;

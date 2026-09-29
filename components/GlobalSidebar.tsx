@@ -8,7 +8,7 @@ import {
   ClipboardCheck, Users as UsersIcon, Menu, ChevronLeft,
   Cpu, Briefcase, Library, Ticket, Car, LayoutDashboard, Settings,
   School, UserCheck, BookMarked, Megaphone, Plane, HeartHandshake, X,
-  Layers, Route, DoorOpen, Award, Activity, Plug, FlaskConical, BadgeCheck, ShoppingCart, FileCheck2, HandHeart, LifeBuoy, Smartphone,
+  Layers, Route, DoorOpen, Award, Activity, Plug, FlaskConical, BadgeCheck, ShoppingCart, FileCheck2, HandHeart, LifeBuoy, Smartphone, CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -43,6 +43,7 @@ const NAV: NavItem[] = [
   { path: "/credentials", icon: Award, label: "Credentials & Badges" },
   { path: "/chat", icon: MessageSquare, label: "Communications", roles: SCHOOL },
   { path: "/calendar", icon: Calendar, label: "Master Calendar", roles: SCHOOL },
+  { path: "/meetings", icon: CalendarClock, label: "Parent Meetings", roles: ["owner", "administration", "teacher", "parent"] },
   { path: "/leave", icon: Plane, label: "Leave & Absence", roles: SCHOOL },
   { path: "/makerspace", icon: Cpu, label: "MakerSpace & Labs", roles: EVERYONE_BUT_PARENTS },
   { path: "/careers", icon: Briefcase, label: "Career & Portfolio", roles: EVERYONE_BUT_PARENTS },

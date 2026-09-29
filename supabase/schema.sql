@@ -3711,4 +3711,176 @@ begin
   end if;
 end $$;
 
+-- =====================================================================
+-- 13. PARENT–TEACHER MEETINGS
+--     Teachers publish time slots; a parent books one about their child with one of the child's
+--     teachers; both are told, and reminded the day before. No double bookings, no booking
+--     teachers who don't teach the child.
+-- =====================================================================
+create table if not exists public.meeting_slots (
+  id uuid primary key default gen_random_uuid(),
+  teacher_id uuid not null references public.profiles(id) on delete cascade,
+  starts_at timestamptz not null,
+  ends_at timestamptz not null,
+  location text,
+  booked_by uuid references public.profiles(id) on delete set null,
+  student_id uuid references public.profiles(id) on delete set null,
+  note text,
+  booked_at timestamptz,
+  reminded boolean not null default false,
+  created_at timestamptz not null default now(),
+  check (ends_at > starts_at),
+  check (ends_at - starts_at <= interval '4 hours')
+);
+-- The school's time zone, for times written into notifications and texts.
+insert into public.app_settings (key, value) values ('school_timezone', '"Asia/Kolkata"'::jsonb) on conflict (key) do nothing;
+create or replace function public.school_time(p_at timestamptz) returns text
+language sql stable security definer set search_path = public as $$
+  select to_char(p_at at time zone coalesce(public.setting('school_timezone') #>> '{}', 'UTC'), 'Dy DD Mon HH24:MI')
+$$;
+
+create index if not exists meeting_slots_teacher on public.meeting_slots (teacher_id, starts_at);
+-- A teacher can't hold two slots at the same time.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'meeting_slots_no_overlap') then
+    alter table public.meeting_slots add constraint meeting_slots_no_overlap
+      exclude using gist (teacher_id with =, tstzrange(starts_at, ends_at) with &&);
+  end if;
+end $$;
+
+-- Teachers can only change the slot itself while nobody has booked it; bookings go through book_meeting.
+create or replace function public.guard_meeting_slot() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if pg_trigger_depth() > 1 or auth.uid() is null or public.is_admin() or current_setting('erp.meeting_rpc', true) = 'on' then return new; end if;
+  if tg_op = 'INSERT' then
+    new.teacher_id := auth.uid();
+    new.booked_by := null; new.student_id := null; new.note := null; new.booked_at := null; new.reminded := false;
+    if new.starts_at < now() then raise exception 'Slots must be in the future.'; end if;
+    return new;
+  end if;
+  if new.booked_by is distinct from old.booked_by or new.student_id is distinct from old.student_id
+     or new.booked_at is distinct from old.booked_at or new.teacher_id <> old.teacher_id then
+    raise exception 'Bookings are made by parents.';
+  end if;
+  if old.booked_by is not null and (new.starts_at <> old.starts_at or new.ends_at <> old.ends_at) then
+    raise exception 'This slot is booked; cancel the booking before moving it.';
+  end if;
+  return new;
+end $$;
+create or replace function public.guard_meeting_delete() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if old.booked_by is not null and not public.is_admin() then
+    raise exception 'This slot is booked; cancel the booking first so the parent is told.';
+  end if;
+  return old;
+end $$;
+drop trigger if exists meeting_slot_delete_guard on public.meeting_slots;
+create trigger meeting_slot_delete_guard before delete on public.meeting_slots for each row execute function public.guard_meeting_delete();
+drop trigger if exists meeting_slot_guard on public.meeting_slots;
+create trigger meeting_slot_guard before insert or update on public.meeting_slots for each row execute function public.guard_meeting_slot();
+
+-- A parent books a free slot with one of their child's teachers.
+create or replace function public.book_meeting(p_slot uuid, p_student uuid, p_note text default null) returns void
+language plpgsql security definer set search_path = public as $$
+declare s record; child text; parent_name text;
+begin
+  if not public.is_guardian_of(p_student) then raise exception 'You can only book meetings about your own child.'; end if;
+  select * into s from public.meeting_slots where id = p_slot for update;
+  if s.id is null then raise exception 'That slot no longer exists.'; end if;
+  if s.booked_by is not null then raise exception 'Sorry, that slot has just been taken.'; end if;
+  if s.starts_at < now() then raise exception 'That slot is in the past.'; end if;
+  if not exists (select 1 from public.class_enrollments e join public.classes c on c.id = e.class_id
+                 where e.student_id = p_student and e.status = 'enrolled' and c.teacher_id = s.teacher_id) then
+    raise exception 'This teacher does not teach your child.';
+  end if;
+  if exists (select 1 from public.meeting_slots where booked_by = auth.uid() and student_id = p_student
+             and teacher_id = s.teacher_id and starts_at > now()) then
+    raise exception 'You already have a meeting booked with this teacher.';
+  end if;
+  perform set_config('erp.meeting_rpc', 'on', true);
+  update public.meeting_slots set booked_by = auth.uid(), student_id = p_student, note = left(nullif(trim(p_note), ''), 500), booked_at = now()
+    where id = p_slot;
+  select full_name into child from public.profiles where id = p_student;
+  select full_name into parent_name from public.profiles where id = auth.uid();
+  perform public.notify_user(s.teacher_id, 'Parent meeting booked',
+    format('%s (about %s) on %s%s.', parent_name, child, public.school_time(s.starts_at), coalesce(' · ' || s.location, '')), '/meetings');
+end $$;
+
+-- Either side can cancel; the other side is told.
+create or replace function public.cancel_meeting(p_slot uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare s record; who text;
+begin
+  select * into s from public.meeting_slots where id = p_slot for update;
+  if s.id is null or s.booked_by is null then raise exception 'There is no booking to cancel.'; end if;
+  if not (auth.uid() in (s.booked_by, s.teacher_id) or public.is_admin()) then raise exception 'Not your meeting.'; end if;
+  perform set_config('erp.meeting_rpc', 'on', true);
+  update public.meeting_slots set booked_by = null, student_id = null, note = null, booked_at = null, reminded = false where id = p_slot;
+  select full_name into who from public.profiles where id = auth.uid();
+  perform public.notify_user(case when auth.uid() = s.teacher_id then s.booked_by else s.teacher_id end,
+    'Parent meeting cancelled', format('%s cancelled the meeting on %s.', who, public.school_time(s.starts_at)), '/meetings');
+end $$;
+
+-- Nightly: remind both sides of tomorrow's meetings (in-app, and by text for people who opted in).
+create or replace function public.remind_meetings() returns int
+language plpgsql security definer set search_path = public as $$
+declare s record; n int := 0; child text;
+begin
+  if auth.uid() is not null and not public.is_admin() then raise exception 'Administrators only.'; end if;
+  for s in select * from public.meeting_slots
+           where booked_by is not null and not reminded and starts_at between now() and now() + interval '36 hours' loop
+    select full_name into child from public.profiles where id = s.student_id;
+    insert into public.notifications (user_id, title, body, link)
+    select u, 'Meeting reminder', format('Parent meeting about %s on %s%s.', child, public.school_time(s.starts_at), coalesce(' · ' || s.location, '')), '/meetings'
+    from unnest(array[s.booked_by, s.teacher_id]) u;
+    perform set_config('erp.meeting_rpc', 'on', true);
+    update public.meeting_slots set reminded = true where id = s.id;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+-- Teachers of a parent's children (for choosing whom to meet); names only.
+create or replace function public.my_childrens_teachers() returns table (teacher_id uuid, teacher_name text, student_id uuid, student_name text, class_name text)
+language sql stable security definer set search_path = public as $$
+  select distinct c.teacher_id, t.full_name, e.student_id, s.full_name, c.name
+  from public.guardian_links g
+  join public.class_enrollments e on e.student_id = g.student_id and e.status = 'enrolled'
+  join public.classes c on c.id = e.class_id and c.teacher_id is not null
+  join public.profiles t on t.id = c.teacher_id
+  join public.profiles s on s.id = e.student_id
+  where g.guardian_id = auth.uid() and public.app_role() = 'parent'
+$$;
+
+do $$
+declare p record;
+begin
+  for p in select policyname, tablename from pg_policies where schemaname = 'public' and tablename = 'meeting_slots' loop
+    execute format('drop policy if exists %I on public.%I', p.policyname, p.tablename);
+  end loop;
+end $$;
+alter table public.meeting_slots enable row level security;
+-- Teachers manage their own slots; parents see free future slots of their children's teachers and their own bookings.
+create policy "slots teacher" on public.meeting_slots for all to authenticated
+  using (teacher_id = auth.uid() or public.is_admin()) with check ((teacher_id = auth.uid() and public.app_role() = 'teacher') or public.is_admin());
+create policy "slots parent read" on public.meeting_slots for select to authenticated using (
+  booked_by = auth.uid()
+  or (booked_by is null and starts_at > now() and exists (select 1 from public.my_childrens_teachers() t where t.teacher_id = meeting_slots.teacher_id)));
+
+revoke execute on function public.book_meeting(uuid, uuid, text), public.cancel_meeting(uuid), public.remind_meetings(), public.my_childrens_teachers() from public, anon;
+grant execute on function public.book_meeting(uuid, uuid, text), public.cancel_meeting(uuid), public.remind_meetings(), public.my_childrens_teachers() to authenticated;
+
+do $$
+begin
+  execute 'drop trigger if exists audit_meeting_slots on public.meeting_slots';
+  execute 'create trigger audit_meeting_slots after insert or update or delete on public.meeting_slots for each row execute function public.write_audit()';
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.unschedule(jobid) from cron.job where jobname = 'erp-meeting-reminders';
+    perform cron.schedule('erp-meeting-reminders', '0 17 * * *', 'select public.remind_meetings()');
+  end if;
+end $$;
+
 notify pgrst, 'reload schema';

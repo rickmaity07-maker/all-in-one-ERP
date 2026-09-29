@@ -472,6 +472,68 @@ test("signed credentials: issued, signed automatically, verified publicly by sig
   expect(vc.credentialSubject.name).toBe(student.name);
 });
 
+test("parent meetings: a teacher offers times, a parent books one about their child, the teacher sees it and cancels", async ({ page }) => {
+  test.skip(!TODAY_IS_SCHOOL_DAY, "The student is enrolled by the timetable test, which needs a school day.");
+  const tomorrow = new Date(Date.now() + 86400_000);
+  await as(page, teacher);
+  await page.goto("/meetings");
+  await page.getByRole("button", { name: "Add slots" }).first().click();
+  await modal(page).getByLabel("Date").fill(iso(tomorrow));
+  await modal(page).getByLabel("From").fill("10:00");
+  await modal(page).getByLabel("To").fill("10:30");
+  await modal(page).getByLabel("Each meeting").selectOption("15");
+  await modal(page).getByLabel("Place or video link").fill("Room 4");
+  await modal(page).getByRole("button", { name: "Add slots" }).click();
+  await expectToast(page, "2 slots added.");
+  await expect(page.getByText("free")).toHaveCount(2);
+  await logout(page);
+
+  await as(page, parent);
+  await page.goto("/meetings");
+  const card = page.locator("div.rounded-3xl").filter({ hasText: teacher.name }).first();
+  await card.getByRole("button").first().click();
+  await expect(modal(page).getByLabel("About")).toHaveValue(/.+/);
+  await modal(page).getByLabel("What would you like to discuss? (optional)").fill("Homework and reading");
+  await modal(page).getByRole("button", { name: "Book meeting" }).click();
+  await expectToast(page, "Meeting booked. The teacher has been told.");
+  await expect(page.getByText(`with ${teacher.name}`)).toBeVisible();
+  await logout(page);
+
+  await as(page, teacher);
+  await page.goto("/meetings");
+  await expect(page.getByText("booked", { exact: true })).toBeVisible();
+  await expect(page.getByText("Homework and reading")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).first().click();
+  await expectToast(page, "Meeting cancelled.");
+  await expect(page.getByText("free")).toHaveCount(2);
+  const told = await (await api(parent)).get("notifications?title=eq.Parent%20meeting%20cancelled&select=id");
+  expect(told.length).toBe(1);
+});
+
+test("website: after the first visit it opens without a connection", async ({ page }) => {
+  test.skip(!process.env.E2E_BASE_URL || onApp, "Only the published website uses the offline service worker.");
+  allowed.push(/ERR_INTERNET_DISCONNECTED|Failed to fetch|ERR_NAME_NOT_RESOLVED|WebSocket|Failed to load resource/);
+  await as(page, owner);
+  // The service worker saves the main pages in the background after sign-in.
+  await expect.poll(() => page.evaluate(async () => {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg?.active) return 0;
+    let n = 0;
+    for (const key of await caches.keys()) if (key.startsWith("erp-pages-")) n += (await (await caches.open(key)).keys()).length;
+    return n;
+  }), { timeout: 60_000, message: "pages saved for offline use" }).toBeGreaterThan(10);
+  await page.goto("/tasks");
+  await expect(page.getByRole("button", { name: "Create Task" })).toBeVisible();
+  await page.context().setOffline(true);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Create Task" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/You're offline/)).toBeVisible();
+  // A page that wasn't open before also opens offline.
+  await page.goto("/announcements");
+  await expect(page.getByRole("heading", { name: /Notice Board/ }).first()).toBeVisible({ timeout: 30_000 });
+  await page.context().setOffline(false);
+});
+
 test("AI assistant: opens from the sidebar, offers questions for the role, and answers or says it isn't set up", async ({ page }) => {
   await as(page, student);
   await page.getByRole("button", { name: "Ask AI" }).first().click();

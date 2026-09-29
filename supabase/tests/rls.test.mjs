@@ -929,6 +929,65 @@ check("user clears the flag after changing password", !r.error && r.rows.length 
   check("public verification returns the signed credential and key", r.rows[0]?.v?.credential_jwt === "header.payload.sig" && r.rows[0]?.v?.public_jwk?.x === "a", r.error ?? "");
 }
 
+// --- Section 13: parent–teacher meetings ---
+{
+  const q1 = async (sql, params = []) => (await db.query(sql, params)).rows;
+  const pa = "00000000-0000-0000-0000-000000000095", pb = "00000000-0000-0000-0000-000000000094", other = "00000000-0000-0000-0000-000000000096";
+  for (const [id, name] of [[pa, "parentA"], [pb, "parentB"]]) {
+    await db.query(`insert into auth.users (id, email, raw_user_meta_data) values ($1, $2, $3)`, [id, `${name}@test.local`, { full_name: name }]);
+    await db.query(`update public.profiles set active = true, pending = false, role = 'parent' where id = $1`, [id]);
+  }
+  await q1(`insert into public.guardian_links (guardian_id, student_id) values ($1, $2), ($3, $4) on conflict do nothing`, [pa, ids.alice, pb, ids.bob]);
+  // alice is enrolled in a class of ids.teacher (section 12); "other" teaches a class without alice.
+  const at = (h) => new Date(Date.now() + h * 3600_000).toISOString();
+
+  let r = await as(ids.teacher, `insert into public.meeting_slots (starts_at, ends_at, location) values ($1, $2, 'Room 4') returning id`, [at(20), at(20.25)]);
+  const slot = r.rows[0]?.id;
+  check("teachers publish meeting slots", !!slot, r.error ?? "");
+  r = await as(ids.teacher, `insert into public.meeting_slots (starts_at, ends_at) values ($1, $2)`, [at(20.1), at(20.3)]);
+  check("a teacher can't have overlapping slots", !!r.error, r.error ?? "accepted!");
+  r = await as(ids.teacher, `insert into public.meeting_slots (starts_at, ends_at) values ($1, $2)`, [at(-5), at(-4.75)]);
+  check("slots must be in the future", /future/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.alice, `insert into public.meeting_slots (starts_at, ends_at) values ($1, $2)`, [at(30), at(30.25)]);
+  check("students cannot publish slots", !!r.error, r.error ?? "accepted!");
+  const [otherSlot] = await q1(`insert into public.meeting_slots (teacher_id, starts_at, ends_at) values ($1, $2, $3) returning id`, [other, at(21), at(21.25)]);
+
+  check("a parent sees free slots of their child's teachers", (await count(pa, `select * from public.meeting_slots where id = '${slot}'`)) === 1);
+  check("but not slots of teachers who don't teach their child", (await count(pa, `select * from public.meeting_slots where id = '${otherSlot.id}'`)) === 0);
+  check("parents list their children's teachers", (await as(pa, `select * from public.my_childrens_teachers() where teacher_id = $1`, [ids.teacher])).rows.length >= 1);
+  check("students get no list of teachers to book", (await count(ids.alice, `select * from public.my_childrens_teachers()`)) === 0);
+
+  r = await as(pa, `select public.book_meeting($1, $2)`, [slot, ids.bob]);
+  check("a parent cannot book about someone else's child", /own child/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(pa, `select public.book_meeting($1, $2)`, [otherSlot.id, ids.alice]);
+  check("a parent cannot book a teacher who doesn't teach the child", /does not teach/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(pa, `select public.book_meeting($1, $2, 'Maths progress')`, [slot, ids.alice]);
+  check("a parent books a slot about their child", !r.error, r.error ?? "");
+  check("the teacher is told about the booking", (await count(ids.teacher, `select * from public.notifications where title = 'Parent meeting booked'`)) >= 1);
+  r = await as(pb, `select public.book_meeting($1, $2)`, [slot, ids.bob]);
+  check("a taken slot can't be booked again", !!r.error, r.error ?? "accepted!");
+  check("other parents can't see the booking", (await count(pb, `select * from public.meeting_slots where id = '${slot}'`)) === 0);
+  check("the parent sees their booking", (await count(pa, `select * from public.meeting_slots where id = '${slot}' and booked_by = '${pa}'`)) === 1);
+
+  r = await as(ids.teacher, `update public.meeting_slots set booked_by = null where id = $1`, [slot]);
+  check("teachers can't rewrite bookings", /made by parents/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.teacher, `update public.meeting_slots set starts_at = $2, ends_at = $3 where id = $1`, [slot, at(40), at(40.25)]);
+  check("a booked slot can't be moved", /cancel the booking/.test(r.error ?? ""), r.error ?? "accepted!");
+  r = await as(ids.teacher, `delete from public.meeting_slots where id = $1`, [slot]);
+  check("a booked slot can't be deleted", /cancel the booking first/.test(r.error ?? ""), r.error ?? "accepted!");
+
+  r = await as(ids.admin, `select public.remind_meetings() as n`);
+  check("tomorrow's meetings are reminded", r.rows[0]?.n >= 1 && (await count(pa, `select * from public.notifications where title = 'Meeting reminder'`)) === 1
+    && (await count(ids.teacher, `select * from public.notifications where title = 'Meeting reminder'`)) >= 1, r.error ?? "");
+  check("reminders are sent once", (await as(ids.admin, `select public.remind_meetings() as n`)).rows[0]?.n === 0);
+
+  r = await as(pb, `select public.cancel_meeting($1)`, [slot]);
+  check("others cannot cancel the meeting", !!r.error, r.error ?? "accepted!");
+  r = await as(pa, `select public.cancel_meeting($1)`, [slot]);
+  check("the parent cancels and the teacher is told", !r.error && (await count(ids.teacher, `select * from public.notifications where title = 'Parent meeting cancelled'`)) === 1, r.error ?? "");
+  check("the slot is free again", (await q1(`select booked_by from public.meeting_slots where id = $1`, [slot]))[0]?.booked_by === null);
+}
+
 // --- Deactivated account ---
 await db.exec(`update public.profiles set active = false where id = '${ids.eve}'`);
 check("deactivated user sees no general chat", (await count(ids.eve, `select * from public.chat_messages where channel = 'general'`)) === 0);
